@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="SHG Reloaded — task and team management" />
+    <meta name="theme-color" content="#10233f" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="SHG Reloaded" />
+    <title>SHG Reloaded</title>
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" href="icons/app-icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="icons/app-icon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css?v=182" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <button id="sidebarToggle" class="sidebar-toggle" type="button" aria-label="Collapse sidebar" title="Collapse sidebar">‹</button>
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">S</div>
+          <div><strong>SHG</strong><span>Reloaded</span></div>
+        </div>
+
+        <nav class="main-nav" aria-label="Main navigation">
+          <button class="nav-item" data-view="board"><span>▦</span> Tasks</button>
+          <button class="nav-item active" data-view="overview"><span>⌂</span> Overview</button>
+          <button class="nav-item admin-only" data-view="users"><span>♟</span> Users</button>
+          <button class="nav-item admin-only" data-view="activity"><span>≣</span> Activity Log</button>
+        </nav>
+
+        <div class="sidebar-section">
+          <div class="section-label">SPACES <button id="addSpaceFolderBtn" title="Create folder">+</button></div>
+          <button class="project-item active" data-project="all"><i style="--dot:#75829a"></i> All tasks <span id="allCount">0</span></button>
+          <div id="projectList"></div>
+        </div>
+
+        <div class="sidebar-footer">
+          <div id="currentUserAvatar" class="avatar">VS</div>
+          <div class="user-meta"><strong id="currentUserName">Victor Stavropoulos</strong><span id="roleLabel">Administrator</span></div>
+          <button class="dots" type="button" disabled aria-label="Profile options unavailable">•••</button>
+        </div>
+      </aside>
+
+      <main>
+        <header class="topbar">
+          <div class="mobile-brand">SHG <span>Reloaded</span></div>
+          <div class="search-wrap"><span>⌕</span><input id="searchInput" placeholder="Search tasks…" /></div>
+          <div class="top-actions">
+            <button class="data-transfer-btn main-admin-only" type="button" onclick="exportApplicationData()">Export Data</button>
+            <button class="data-transfer-btn main-admin-only" type="button" onclick="document.getElementById('applicationDataImport').click()">Import Data</button>
+            <input id="applicationDataImport" class="hidden" type="file" accept="application/json,.json" onchange="importApplicationData(this)">
+            <label class="user-preview-switcher">View as User
+              <select id="userPreviewSelect"></select>
+            </label>
+          </div>
+        </header>
+
+        <section class="content">
+          <div id="tasksContent">
+          <div class="page-head">
+            <div><p class="eyebrow">WORKSPACE / <span id="projectCrumb">ALL SPACES</span></p><h1>Tasks</h1><p class="subtitle">Organise, assign and track every task.</p></div>
+            <button id="newTaskBtn" class="primary-btn"><span>+</span> New task</button>
+          </div>
+
+          <div class="toolbar">
+            <div class="view-tabs"><button id="listTab" class="active">List</button><button id="calendarTab">Calendar</button><button id="progressLogTab">In Progress Log</button></div>
+            <div class="filters">
+              <label class="filter-btn toggle-filter"><input id="includeDoneFilter" type="checkbox"> Include Done</label>
+              <label class="filter-btn toggle-filter"><input id="viewCancelledFilter" type="checkbox"> View Cancelled</label>
+              <label class="filter-btn toggle-filter"><input id="viewDoneFilter" type="checkbox"> View Done</label>
+              <select id="assigneeFilter" class="filter-btn admin-only" aria-label="Filter by assignee"><option value="all">All assignees</option></select>
+              <button id="myTasksFilter" class="filter-btn">◎ My tasks</button>
+            </div>
+          </div>
+
+          <div id="listView" class="list-view" aria-live="polite"></div>
+          <div id="calendarView" class="calendar-view hidden" aria-live="polite"></div>
+          <div id="progressLogView" class="progress-log-view hidden" aria-live="polite"></div>
+          </div>
+          <div id="usersView" class="users-view hidden" aria-live="polite"></div>
+          <div id="overviewView" class="overview-view hidden" aria-live="polite"></div>
+          <div id="activityView" class="activity-view hidden" aria-live="polite"></div>
+        </section>
+      </main>
+    </div>
+
+    <div id="modalBackdrop" class="modal-backdrop hidden">
+      <section class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+        <button id="closeModal" class="close-btn" aria-label="Close">×</button>
+        <div id="modalContent"></div>
+        <footer id="taskDetailsFooter" class="task-details-footer hidden"></footer>
+      </section>
+    </div>
+
+    <div id="toast" class="toast"></div>
+    <script src="bootstrap-data.js"></script>
+    <script src="jira-tasks.js"></script>
+    <script src="victor-main-filter.js"></script>
+    <script src="jira-comments-01.js"></script>
+    <script src="jira-comments-02.js"></script>
+    <script src="jira-comments-03.js"></script>
+    <script src="jira-comments-04.js"></script>
+    <script src="jira-comments-05.js"></script>
+    <script src="jira-comments-06.js"></script>
+    <script src="jira-comments-07.js"></script>
+    <script src="jira-comments-08.js"></script>
+    <script src="jira-comments-09.js"></script>
+    <script src="jira-comments-10.js"></script>
+    <script src="jira-comments-11.js"></script>
+    <script src="jira-comments-12.js"></script>
+    <script src="jira-comments-13.js"></script>
+    <script src="jira-comments-14.js"></script>
+    <script src="jira-comments-15.js"></script>
+    <script src="jira-comments-16.js"></script>
+    <script src="app.js?v=182"></script>
+  </body>
+</html>
