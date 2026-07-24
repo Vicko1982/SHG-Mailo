@@ -30,9 +30,11 @@ function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
-  // Magic-link step (για admin / main_admin)
-  const [magicLinkStep, setMagicLinkStep] = useState(false);
-  const [magicLinkEmail, setMagicLinkEmail] = useState("");
+  // Email OTP step (for admin / main_admin)
+  const [otpStep, setOtpStep] = useState(false);
+  const [otpEmail, setOtpEmail] = useState("");
+  const [otpCode, setOtpCode] = useState("");
+  const [otpLoading, setOtpLoading] = useState(false);
 
   // Bootstrap (πρώτος admin)
   const [bootstrapAvailable, setBootstrapAvailable] = useState(false);
@@ -62,7 +64,7 @@ function LoginPage() {
       return;
     }
 
-    // Ελέγχουμε αν ο χρήστης είναι admin/main_admin -> απαιτείται magic link
+    // Admin and Main Admin accounts require a second verification step.
     const { data: roles } = await supabase
       .from("user_roles")
       .select("role")
@@ -78,36 +80,65 @@ function LoginPage() {
       return;
     }
 
-    // Admin: αποσυνδέουμε και στέλνουμε magic link στο email
+    // Sign out the password session and send a one-time code by email.
     await supabase.auth.signOut();
-    const { error: magicLinkError } = await supabase.auth.signInWithOtp({
+    const { error: otpError } = await supabase.auth.signInWithOtp({
       email,
       options: {
         shouldCreateUser: false,
-        emailRedirectTo: `${window.location.origin}/`,
       },
     });
     setLoading(false);
-    if (magicLinkError) {
-      toast.error(magicLinkError.message);
+    if (otpError) {
+      toast.error(otpError.message);
       return;
     }
-    setMagicLinkEmail(email);
-    setMagicLinkStep(true);
+    setOtpEmail(email);
+    setOtpCode("");
+    setOtpStep(true);
     setPassword("");
-    toast.success(tr("A sign-in link was sent to your email.", "Στάλθηκε σύνδεσμος σύνδεσης στο email σου."));
+    toast.success(tr("An 8-digit verification code was sent to your email.", "Στάλθηκε οκταψήφιος κωδικός επαλήθευσης στο email σου."));
   }
 
-  async function handleResendMagicLink() {
+  async function handleVerifyOtp(e: FormEvent) {
+    e.preventDefault();
+    const normalizedCode = otpCode.replace(/\D/g, "");
+    if (normalizedCode.length !== 8) {
+      toast.error(tr("Enter the 8-digit code.", "Πληκτρολόγησε τον οκταψήφιο κωδικό."));
+      return;
+    }
+
+    setOtpLoading(true);
+    const { error } = await supabase.auth.verifyOtp({
+      email: otpEmail,
+      token: normalizedCode,
+      type: "email",
+    });
+    setOtpLoading(false);
+
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+
+    toast.success(tr("Verification completed. Welcome!", "Η επαλήθευση ολοκληρώθηκε. Καλωσόρισες!"));
+    router.navigate({ to: "/", replace: true });
+  }
+
+  async function handleResendOtp() {
+    setOtpLoading(true);
     const { error } = await supabase.auth.signInWithOtp({
-      email: magicLinkEmail,
+      email: otpEmail,
       options: {
         shouldCreateUser: false,
-        emailRedirectTo: `${window.location.origin}/`,
       },
     });
+    setOtpLoading(false);
     if (error) toast.error(error.message);
-    else toast.success(tr("A new sign-in link was sent.", "Στάλθηκε νέος σύνδεσμος σύνδεσης."));
+    else {
+      setOtpCode("");
+      toast.success(tr("A new 8-digit code was sent.", "Στάλθηκε νέος οκταψήφιος κωδικός."));
+    }
   }
 
   async function handleBootstrap(e: FormEvent) {
@@ -141,27 +172,48 @@ function LoginPage() {
           </p>
         </div>
         <Card className="p-6">
-          {magicLinkStep ? (
-            <div className="space-y-4">
+          {otpStep ? (
+            <form onSubmit={handleVerifyOtp} className="space-y-4">
               <div>
                 <h2 className="font-semibold">{tr("Administrator verification", "Επαλήθευση διαχειριστή")}</h2>
                 <p className="text-xs text-muted-foreground mt-1">
-                  {tr("We sent a secure link to", "Στείλαμε έναν ασφαλή σύνδεσμο στο")} <strong>{magicLinkEmail}</strong>.
-                  {tr(" Open the email and click the link to return to the browser and sign in automatically.", " Άνοιξε το email και πάτησε τον σύνδεσμο για να επιστρέψεις στον browser και να συνδεθείς αυτόματα.")}
+                  {tr("We sent an 8-digit verification code to", "Στείλαμε έναν οκταψήφιο κωδικό επαλήθευσης στο")} <strong>{otpEmail}</strong>.
                 </p>
               </div>
-              <div className="rounded-md border bg-muted/50 p-3 text-xs text-muted-foreground">
-                {tr("You do not need to enter a code on this page. If you cannot find the email, check your spam folder.", "Δεν χρειάζεται να εισαγάγεις κωδικό σε αυτή τη σελίδα. Αν δεν βλέπεις το email, έλεγξε και τον φάκελο ανεπιθύμητης αλληλογραφίας.")}
+              <div className="space-y-2">
+                <Label htmlFor="admin-otp">{tr("Verification code", "Κωδικός επαλήθευσης")}</Label>
+                <Input
+                  id="admin-otp"
+                  type="text"
+                  required
+                  autoFocus
+                  autoComplete="one-time-code"
+                  inputMode="numeric"
+                  pattern="[0-9]{8}"
+                  minLength={8}
+                  maxLength={8}
+                  placeholder="00000000"
+                  value={otpCode}
+                  onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, "").slice(0, 8))}
+                  className="text-center text-lg tracking-[0.35em]"
+                />
               </div>
+              <Button type="submit" className="w-full" disabled={otpLoading || otpCode.length !== 8}>
+                {otpLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                {tr("Verify & sign in", "Επαλήθευση & σύνδεση")}
+              </Button>
               <div className="flex justify-between text-xs">
-                <button type="button" className="text-muted-foreground hover:underline" onClick={() => setMagicLinkStep(false)}>
+                <button type="button" className="text-muted-foreground hover:underline" onClick={() => setOtpStep(false)}>
                   ← {tr("Back", "Πίσω")}
                 </button>
-                <button type="button" className="text-muted-foreground hover:underline" onClick={handleResendMagicLink}>
-                  {tr("Resend link", "Επαναποστολή συνδέσμου")}
+                <button type="button" className="text-muted-foreground hover:underline" onClick={handleResendOtp} disabled={otpLoading}>
+                  {tr("Resend code", "Επαναποστολή κωδικού")}
                 </button>
               </div>
-            </div>
+              <p className="text-xs text-muted-foreground text-center">
+                {tr("If you cannot find the email, check your spam folder.", "Αν δεν βλέπεις το email, έλεγξε και τον φάκελο ανεπιθύμητης αλληλογραφίας.")}
+              </p>
+            </form>
           ) : showBootstrap && bootstrapAvailable ? (
             <form onSubmit={handleBootstrap} className="space-y-4">
               <div>

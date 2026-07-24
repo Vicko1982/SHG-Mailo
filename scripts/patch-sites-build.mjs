@@ -1,12 +1,24 @@
-import { readdir, readFile, writeFile } from "node:fs/promises";
+import { cp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { extname, join, relative, resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
+const outputDir = join(root, ".output");
+const distDir = join(root, "dist");
 const publicDir = join(root, "dist", "public");
 const serverEntries = [
   join(root, "dist", "server", "index.js"),
   join(root, "dist", "server", "index.mjs"),
 ];
+
+// TanStack Start emits the deployable Nitro bundle into .output, while Sites
+// packages dist. Always synchronize the fresh build before applying the Sites
+// static-asset fallback.
+await rm(distDir, { recursive: true, force: true });
+await cp(outputDir, distDir, { recursive: true });
+await cp(
+  join(distDir, "server", "index.mjs"),
+  join(distDir, "server", "index.js"),
+);
 
 const mimeTypes = {
   ".css": "text/css; charset=utf-8",
