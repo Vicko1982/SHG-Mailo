@@ -540,7 +540,7 @@ export function TaskList({
 
       {/* Table */}
       {draggedTaskId && (
-        <div className="sticky top-2 z-30 space-y-2 rounded-md border border-primary/40 bg-background/95 p-2 shadow-md backdrop-blur">
+        <div className="fixed bottom-6 right-6 z-50 w-[min(28rem,calc(100vw-3rem))] space-y-2 rounded-md border border-primary/40 bg-background/95 p-2 shadow-xl backdrop-blur">
           <div className="text-center text-xs font-medium text-muted-foreground">
             {tr(
               "Drop above or below a row to reposition · Drop in the centre to create a subtask",
