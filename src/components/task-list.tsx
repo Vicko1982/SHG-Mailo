@@ -28,6 +28,12 @@ type ColumnKey = TaskSortKey | "assignee" | "space" | "labels";
 type Col = { key: ColumnKey; label: string; width: number };
 type SortRule = { key: ColumnKey; direction: "asc" | "desc" };
 type DropMode = "before" | "child" | "after";
+type PointerTaskDrag = {
+  taskId: string;
+  startX: number;
+  startY: number;
+  active: boolean;
+};
 
 const COLUMNS: Col[] = [
   { key: "task_key", label: "Key", width: 120 },
@@ -67,6 +73,7 @@ export function TaskList({
   );
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<{ taskId: string; mode: DropMode } | null>(null);
+  const [standaloneDropActive, setStandaloneDropActive] = useState(false);
   const [manualOrder, setManualOrder] = useState<string[]>([]);
   const [page, setPage] = useState(1);
   const [openTaskKey, setOpenTaskKey] = useState<string | null>(null);
@@ -75,6 +82,8 @@ export function TaskList({
   const [editingTitle, setEditingTitle] = useState("");
   const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draggedTaskIdRef = useRef<string | null>(null);
+  const pointerTaskDragRef = useRef<PointerTaskDrag | null>(null);
+  const pointerTaskDragCleanupRef = useRef<(() => void) | null>(null);
   const pageSize = 50;
 
   const fetchTasks = useServerFn(listTasks);
@@ -311,8 +320,144 @@ export function TaskList({
 
   const clearTaskDrag = () => {
     draggedTaskIdRef.current = null;
+    pointerTaskDragRef.current = null;
     setDraggedTaskId(null);
     setDropTarget(null);
+    setStandaloneDropActive(false);
+  };
+
+  useEffect(() => () => pointerTaskDragCleanupRef.current?.(), []);
+
+  const pointerDropTarget = (clientX: number, clientY: number) => {
+    const element = document.elementFromPoint(clientX, clientY);
+    const standalone = element?.closest<HTMLElement>("[data-task-standalone-drop]");
+    if (standalone) return { standalone: true as const };
+    const row = element?.closest<HTMLTableRowElement>("tr[data-task-row-id]");
+    const taskId = row?.dataset.taskRowId;
+    if (!row || !taskId) return null;
+    return { standalone: false as const, taskId, mode: dropModeForRow(row, clientY) };
+  };
+
+  const completeTaskDrop = (
+    sourceId: string,
+    target: { standalone: true } | { standalone: false; taskId: string; mode: DropMode } | null,
+  ) => {
+    const source = rows.find((task) => task.id === sourceId);
+    if (!source || !target) {
+      clearTaskDrag();
+      return;
+    }
+    if (target.standalone) {
+      if (!source.parent_id) {
+        clearTaskDrag();
+        return;
+      }
+      if (window.confirm(tr(
+        "Make this subtask a standalone task?",
+        "Να γίνει αυτή η υποεργασία αυτόνομη εργασία;",
+      ))) {
+        placementMutation.mutate({ taskId: sourceId, parentTaskId: null });
+      } else {
+        clearTaskDrag();
+      }
+      return;
+    }
+    if (sourceId === target.taskId) {
+      clearTaskDrag();
+      return;
+    }
+    const targetTask = rows.find((task) => task.id === target.taskId);
+    if (!targetTask) {
+      clearTaskDrag();
+      return;
+    }
+    if (target.mode === "child") {
+      const confirmed = window.confirm(tr(
+        `Are you sure you want ${source.task_key} to become a subtask of ${targetTask.task_key}?`,
+        `Είστε βέβαιοι ότι θέλετε το ${source.task_key} να γίνει υποεργασία του ${targetTask.task_key};`,
+      ));
+      if (confirmed) {
+        placementMutation.mutate({ taskId: sourceId, parentTaskId: targetTask.id });
+      } else {
+        clearTaskDrag();
+      }
+      return;
+    }
+    if (source.parent_id) {
+      const confirmed = window.confirm(tr(
+        "Move this subtask out of its parent and make it a standalone task?",
+        "Να αφαιρεθεί αυτή η υποεργασία από τη γονική εργασία και να γίνει αυτόνομη;",
+      ));
+      if (!confirmed) {
+        clearTaskDrag();
+        return;
+      }
+      placementMutation.mutate({ taskId: sourceId, parentTaskId: null });
+    }
+    reorderTask(sourceId, targetTask.id, target.mode);
+    clearTaskDrag();
+  };
+
+  const beginPointerTaskDrag = (taskId: string, event: ReactPointerEvent<HTMLSpanElement>) => {
+    if (isImpersonating || event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    clearClickTimer();
+    setEditingTaskId(null);
+
+    pointerTaskDragCleanupRef.current?.();
+    pointerTaskDragRef.current = {
+      taskId,
+      startX: event.clientX,
+      startY: event.clientY,
+      active: false,
+    };
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const drag = pointerTaskDragRef.current;
+      if (!drag) return;
+      const distance = Math.hypot(moveEvent.clientX - drag.startX, moveEvent.clientY - drag.startY);
+      if (!drag.active && distance < 6) return;
+      moveEvent.preventDefault();
+      if (!drag.active) {
+        drag.active = true;
+        draggedTaskIdRef.current = drag.taskId;
+        setDraggedTaskId(drag.taskId);
+      }
+      const target = pointerDropTarget(moveEvent.clientX, moveEvent.clientY);
+      setStandaloneDropActive(Boolean(target?.standalone));
+      setDropTarget(target && !target.standalone && target.taskId !== drag.taskId
+        ? { taskId: target.taskId, mode: target.mode }
+        : null);
+    };
+
+    const cleanup = () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerEnd);
+      window.removeEventListener("pointercancel", handlePointerCancel);
+      pointerTaskDragCleanupRef.current = null;
+    };
+
+    const handlePointerEnd = (upEvent: PointerEvent) => {
+      const drag = pointerTaskDragRef.current;
+      cleanup();
+      if (!drag?.active) {
+        clearTaskDrag();
+        return;
+      }
+      upEvent.preventDefault();
+      completeTaskDrop(drag.taskId, pointerDropTarget(upEvent.clientX, upEvent.clientY));
+    };
+
+    const handlePointerCancel = () => {
+      cleanup();
+      clearTaskDrag();
+    };
+
+    pointerTaskDragCleanupRef.current = cleanup;
+    window.addEventListener("pointermove", handlePointerMove, { passive: false });
+    window.addEventListener("pointerup", handlePointerEnd);
+    window.addEventListener("pointercancel", handlePointerCancel);
   };
 
   const activeFilterCount = useMemo(() => {
@@ -548,24 +693,12 @@ export function TaskList({
             )}
           </div>
           <div
-            className="rounded-md border-2 border-dashed border-primary/50 bg-primary/5 p-2 text-center text-sm font-medium"
-            onDragOver={(event) => {
-              event.preventDefault();
-              event.dataTransfer.dropEffect = "move";
-            }}
-            onDrop={(event) => {
-              event.preventDefault();
-              const sourceId = draggedTaskIdRef.current || event.dataTransfer.getData("text/task-id");
-              if (!sourceId) return;
-              if (window.confirm(tr(
-                "Make this subtask a standalone task?",
-                "Να γίνει αυτή η υποεργασία αυτόνομη εργασία;",
-              ))) {
-                placementMutation.mutate({ taskId: sourceId, parentTaskId: null });
-              } else {
-                clearTaskDrag();
-              }
-            }}
+            data-task-standalone-drop
+            className={`rounded-md border-2 border-dashed p-2 text-center text-sm font-medium transition-colors ${
+              standaloneDropActive
+                ? "border-primary bg-primary/15"
+                : "border-primary/50 bg-primary/5"
+            }`}
           >
             {tr("Drop here to make it a standalone task", "Αφήστε εδώ για να γίνει αυτόνομη εργασία")}
           </div>
@@ -664,54 +797,7 @@ export function TaskList({
               pageRows.map((t, i) => (
                 <tr
                   key={t.id}
-                  onDragOver={(event) => {
-                    const sourceId = draggedTaskIdRef.current || draggedTaskId;
-                    if (sourceId && sourceId !== t.id) {
-                      event.preventDefault();
-                      event.dataTransfer.dropEffect = "move";
-                      const mode = dropModeForRow(event.currentTarget, event.clientY);
-                      setDropTarget({ taskId: t.id, mode });
-                    }
-                  }}
-                  onDragLeave={(event) => {
-                    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                      setDropTarget((current) => current?.taskId === t.id ? null : current);
-                    }
-                  }}
-                  onDrop={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    const sourceId = draggedTaskIdRef.current
-                      || draggedTaskId
-                      || event.dataTransfer.getData("text/task-id")
-                      || event.dataTransfer.getData("text/plain");
-                    if (!sourceId || sourceId === t.id) return;
-                    const source = rows.find((task) => task.id === sourceId);
-                    const mode = dropModeForRow(event.currentTarget, event.clientY);
-                    setDropTarget(null);
-                    if (mode === "child") {
-                      const confirmed = window.confirm(tr(
-                        `Are you sure you want ${source?.task_key ?? "this task"} to become a subtask of ${t.task_key}?`,
-                        `Είστε βέβαιοι ότι θέλετε το ${source?.task_key ?? "task"} να γίνει υποεργασία του ${t.task_key};`,
-                      ));
-                      if (confirmed) placementMutation.mutate({ taskId: sourceId, parentTaskId: t.id });
-                      else clearTaskDrag();
-                      return;
-                    }
-                    if (source?.parent_id) {
-                      const confirmed = window.confirm(tr(
-                        "Move this subtask out of its parent and make it a standalone task?",
-                        "Να αφαιρεθεί αυτή η υποεργασία από τη γονική εργασία και να γίνει αυτόνομη;",
-                      ));
-                      if (!confirmed) {
-                        clearTaskDrag();
-                        return;
-                      }
-                      placementMutation.mutate({ taskId: sourceId, parentTaskId: null });
-                    }
-                    reorderTask(sourceId, t.id, mode);
-                    clearTaskDrag();
-                  }}
+                  data-task-row-id={t.id}
                   className={`cursor-pointer border-b transition-colors ${
                     dropTarget?.taskId === t.id && dropTarget.mode === "before"
                       ? "border-t-2 border-t-primary "
@@ -777,7 +863,6 @@ export function TaskList({
                         <span
                           role="button"
                           tabIndex={0}
-                          draggable={!isImpersonating}
                           data-task-drag-handle
                           aria-label={tr(`Drag ${t.task_key}`, `Μετακίνηση ${t.task_key}`)}
                           title={tr(
@@ -786,25 +871,11 @@ export function TaskList({
                           )}
                           onClick={(event) => event.stopPropagation()}
                           onDoubleClick={(event) => event.stopPropagation()}
-                          onDragStart={(event) => {
-                            if (isImpersonating) {
-                              event.preventDefault();
-                              return;
-                            }
-                            clearClickTimer();
-                            setEditingTaskId(null);
-                            draggedTaskIdRef.current = t.id;
-                            setDraggedTaskId(t.id);
-                            event.dataTransfer.effectAllowed = "move";
-                            event.dataTransfer.setData("text/task-id", t.id);
-                            event.dataTransfer.setData("text/plain", t.id);
-                            event.dataTransfer.setDragImage(event.currentTarget, 8, 8);
-                          }}
-                          onDragEnd={clearTaskDrag}
+                          onPointerDown={(event) => beginPointerTaskDrag(t.id, event)}
                           className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded border border-transparent select-none ${
                             isImpersonating
                               ? "cursor-not-allowed opacity-35"
-                              : "cursor-grab hover:border-border hover:bg-accent active:cursor-grabbing"
+                              : "touch-none cursor-grab hover:border-border hover:bg-accent active:cursor-grabbing"
                           }`}
                         >
                           <GripVertical className="h-4 w-4 text-muted-foreground" />
