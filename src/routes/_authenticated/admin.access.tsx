@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Loader2, Search } from "lucide-react";
 import { toast } from "sonner";
 import { useLanguage } from "@/lib/language";
+import { DIRECTORY_USERS, directoryUserId } from "@/lib/directory-users";
 
 export const Route = createFileRoute("/_authenticated/admin/access")({
   component: AccessMatrixPage,
@@ -46,7 +47,23 @@ function AccessMatrixPage() {
     return s;
   }, [data]);
 
-  const users = (data?.users ?? []).filter((u) =>
+  const registeredUsers = data?.users ?? [];
+  const registeredNames = new Set(
+    registeredUsers.map((user) => user.full_name?.trim().toLocaleLowerCase()).filter(Boolean),
+  );
+  const allUsers = [
+    ...registeredUsers.map((user) => ({ ...user, is_directory_only: false })),
+    ...DIRECTORY_USERS
+      .filter((fullName) => !registeredNames.has(fullName.toLocaleLowerCase()))
+      .map((fullName) => ({
+        id: directoryUserId(fullName),
+        full_name: fullName,
+        email: null,
+        is_active: false,
+        is_directory_only: true,
+      })),
+  ].sort((a, b) => (a.full_name ?? "").localeCompare(b.full_name ?? "", undefined, { sensitivity: "base" }));
+  const users = allUsers.filter((u) =>
     !q || u.full_name?.toLowerCase().includes(q.toLowerCase()) || u.email?.toLowerCase().includes(q.toLowerCase()),
   );
   const shared = (data?.spaces ?? []).filter((s) => s.type === "shared");
@@ -89,7 +106,11 @@ function AccessMatrixPage() {
                 <tr key={u.id} className={i % 2 === 0 ? "bg-background" : "bg-muted/20"}>
                   <td className="px-3 py-1.5 border-b border-r sticky left-0 bg-inherit">
                     <div className="truncate font-medium text-sm">{u.full_name}</div>
-                    <div className="truncate text-[10px] text-muted-foreground">{u.email}{u.is_active === false && ` · ${tr("disabled", "ανενεργός")}`}</div>
+                    <div className="truncate text-[10px] text-muted-foreground">
+                      {u.is_directory_only
+                        ? tr("Pending registration", "Εκκρεμεί εγγραφή")
+                        : <>{u.email}{u.is_active === false && ` · ${tr("disabled", "ανενεργός")}`}</>}
+                    </div>
                   </td>
                   {shared.map((s) => {
                     const enabled = memberSet.has(`${s.id}:${u.id}`);
@@ -97,7 +118,8 @@ function AccessMatrixPage() {
                       <td key={s.id} className="px-2 py-1.5 border-b border-r text-center">
                         <Checkbox
                           checked={enabled}
-                          disabled={mutation.isPending}
+                          disabled={mutation.isPending || u.is_directory_only}
+                          title={u.is_directory_only ? tr("Register this user before assigning Space access", "Καταχωρήστε πρώτα τον χρήστη για να ορίσετε πρόσβαση") : undefined}
                           onCheckedChange={(v) =>
                             mutation.mutate({ space_id: s.id, user_id: u.id, enabled: !!v })
                           }

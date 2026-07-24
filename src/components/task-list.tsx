@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { useState, useMemo, useRef, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useState, useMemo, useRef, type PointerEvent as ReactPointerEvent } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -27,6 +27,7 @@ import { useAuth } from "@/lib/auth-context";
 type ColumnKey = TaskSortKey | "assignee" | "space" | "labels";
 type Col = { key: ColumnKey; label: string; width: number };
 type SortRule = { key: ColumnKey; direction: "asc" | "desc" };
+type DropMode = "before" | "child" | "after";
 
 const COLUMNS: Col[] = [
   { key: "task_key", label: "Key", width: 120 },
@@ -65,6 +66,8 @@ export function TaskList({
     Object.fromEntries(COLUMNS.map((column) => [column.key, column.width])) as Record<ColumnKey, number>,
   );
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ taskId: string; mode: DropMode } | null>(null);
+  const [manualOrder, setManualOrder] = useState<string[]>([]);
   const [page, setPage] = useState(1);
   const [openTaskKey, setOpenTaskKey] = useState<string | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -81,12 +84,25 @@ export function TaskList({
   const editTask = useServerFn(updateTaskFields);
   const placeTask = useServerFn(setTaskPlacement);
   const qc = useQueryClient();
-  const { isAdmin } = useAuth();
+  const { isAdmin, user } = useAuth();
   const { impersonatedUserId, isImpersonating } = useImpersonation();
+  const orderStorageKey = useMemo(
+    () => `shg.taskOrder.${user?.id ?? "anonymous"}.${spaceKey ?? scope ?? "all"}`,
+    [scope, spaceKey, user?.id],
+  );
+
+  useEffect(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem(orderStorageKey) ?? "[]");
+      setManualOrder(Array.isArray(stored) ? stored.filter((id) => typeof id === "string") : []);
+    } catch {
+      setManualOrder([]);
+    }
+  }, [orderStorageKey]);
 
   const filters: TaskFilters = {
     spaceKey, scope, statuses, priorities, assigneeIds,
-    search, page, pageSize,
+    search, page: 1, pageSize: 5000,
     sortBy: sorts[0] && !["assignee", "space", "labels"].includes(sorts[0].key)
       ? sorts[0].key as TaskSortKey
       : "updated_at",
@@ -208,28 +224,79 @@ export function TaskList({
         return !query || value(task, column.key).toLocaleLowerCase().includes(query);
       })
     );
-    if (sorts.length === 0) return filtered;
-    return [...filtered].sort((a, b) => {
-      for (const rule of sorts) {
-        const direction = rule.direction === "asc" ? 1 : -1;
-        let comparison: number;
-        if (rule.key === "status") {
-          comparison = statusOrder.indexOf(a.status) - statusOrder.indexOf(b.status);
-        } else if (rule.key === "priority") {
-          comparison = priorityOrder.indexOf(a.priority) - priorityOrder.indexOf(b.priority);
-        } else {
-          comparison = value(a, rule.key).localeCompare(value(b, rule.key), undefined, {
-            sensitivity: "base",
-            numeric: true,
-          });
+    const ordered = [...filtered];
+    if (sorts.length > 0) {
+      ordered.sort((a, b) => {
+        for (const rule of sorts) {
+          const direction = rule.direction === "asc" ? 1 : -1;
+          let comparison: number;
+          if (rule.key === "status") {
+            comparison = statusOrder.indexOf(a.status) - statusOrder.indexOf(b.status);
+          } else if (rule.key === "priority") {
+            comparison = priorityOrder.indexOf(a.priority ?? "") - priorityOrder.indexOf(b.priority ?? "");
+          } else {
+            comparison = value(a, rule.key).localeCompare(value(b, rule.key), undefined, {
+              sensitivity: "base",
+              numeric: true,
+            });
+          }
+          if (comparison !== 0) return comparison * direction;
         }
-        if (comparison !== 0) return comparison * direction;
-      }
-      return 0;
+        return 0;
+      });
+    } else if (manualOrder.length > 0) {
+      const rank = new Map(manualOrder.map((id, index) => [id, index]));
+      ordered.sort((a, b) => {
+        const aRank = rank.get(a.id);
+        const bRank = rank.get(b.id);
+        if (aRank === undefined && bRank === undefined) return 0;
+        if (aRank === undefined) return 1;
+        if (bRank === undefined) return -1;
+        return aRank - bRank;
+      });
+    }
+
+    const visibleIds = new Set(ordered.map((task) => task.id));
+    const children = new Map<string, typeof ordered>();
+    ordered.forEach((task) => {
+      if (!task.parent_id || !visibleIds.has(task.parent_id)) return;
+      const list = children.get(task.parent_id) ?? [];
+      list.push(task);
+      children.set(task.parent_id, list);
     });
-  }, [rows, columnFilters, sorts]);
-  const total = data?.count ?? 0;
+    const grouped: typeof ordered = [];
+    ordered.forEach((task) => {
+      if (task.parent_id && visibleIds.has(task.parent_id)) return;
+      grouped.push(task, ...(children.get(task.id) ?? []));
+    });
+    return grouped;
+  }, [rows, columnFilters, sorts, manualOrder]);
+  const total = displayedRows.length;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const pageRows = displayedRows.slice((page - 1) * pageSize, page * pageSize);
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
+
+  const persistManualOrder = (order: string[]) => {
+    setManualOrder(order);
+    try {
+      localStorage.setItem(orderStorageKey, JSON.stringify(order));
+    } catch {
+      // Keep the in-memory order if browser preference storage is unavailable.
+    }
+  };
+
+  const reorderTask = (sourceId: string, targetId: string, mode: "before" | "after") => {
+    const ids = displayedRows.map((task) => task.id).filter((id) => id !== sourceId);
+    const targetIndex = ids.indexOf(targetId);
+    if (targetIndex < 0) return;
+    ids.splice(targetIndex + (mode === "after" ? 1 : 0), 0, sourceId);
+    setSorts([]);
+    persistManualOrder(ids);
+    toast.success(tr("Task position updated", "Η θέση της εργασίας ενημερώθηκε"));
+  };
 
   const activeFilterCount = useMemo(() => {
     let n = 0;
@@ -563,7 +630,7 @@ export function TaskList({
                 </td>
               </tr>
             ) : (
-              displayedRows.map((t, i) => (
+              pageRows.map((t, i) => (
                 <tr
                   key={t.id}
                   draggable={!isImpersonating}
@@ -572,11 +639,23 @@ export function TaskList({
                     event.dataTransfer.effectAllowed = "move";
                     event.dataTransfer.setData("text/task-id", t.id);
                   }}
-                  onDragEnd={() => setDraggedTaskId(null)}
+                  onDragEnd={() => {
+                    setDraggedTaskId(null);
+                    setDropTarget(null);
+                  }}
                   onDragOver={(event) => {
                     if (draggedTaskId && draggedTaskId !== t.id) {
                       event.preventDefault();
                       event.dataTransfer.dropEffect = "move";
+                      const rect = event.currentTarget.getBoundingClientRect();
+                      const ratio = (event.clientY - rect.top) / Math.max(rect.height, 1);
+                      const mode: DropMode = ratio < 0.25 ? "before" : ratio > 0.75 ? "after" : "child";
+                      setDropTarget({ taskId: t.id, mode });
+                    }
+                  }}
+                  onDragLeave={(event) => {
+                    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                      setDropTarget((current) => current?.taskId === t.id ? null : current);
                     }
                   }}
                   onDrop={(event) => {
@@ -585,14 +664,40 @@ export function TaskList({
                     const sourceId = draggedTaskId || event.dataTransfer.getData("text/task-id");
                     if (!sourceId || sourceId === t.id) return;
                     const source = rows.find((task) => task.id === sourceId);
-                    const confirmed = window.confirm(tr(
-                      `Are you sure you want ${source?.task_key ?? "this task"} to become a subtask of ${t.task_key}?`,
-                      `Είστε βέβαιοι ότι θέλετε το ${source?.task_key ?? "task"} να γίνει υποεργασία του ${t.task_key};`,
-                    ));
-                    if (confirmed) placementMutation.mutate({ taskId: sourceId, parentTaskId: t.id });
-                    else setDraggedTaskId(null);
+                    const mode = dropTarget?.taskId === t.id ? dropTarget.mode : "child";
+                    setDropTarget(null);
+                    if (mode === "child") {
+                      const confirmed = window.confirm(tr(
+                        `Are you sure you want ${source?.task_key ?? "this task"} to become a subtask of ${t.task_key}?`,
+                        `Είστε βέβαιοι ότι θέλετε το ${source?.task_key ?? "task"} να γίνει υποεργασία του ${t.task_key};`,
+                      ));
+                      if (confirmed) placementMutation.mutate({ taskId: sourceId, parentTaskId: t.id });
+                      else setDraggedTaskId(null);
+                      return;
+                    }
+                    if (source?.parent_id) {
+                      const confirmed = window.confirm(tr(
+                        "Move this subtask out of its parent and make it a standalone task?",
+                        "Να αφαιρεθεί αυτή η υποεργασία από τη γονική εργασία και να γίνει αυτόνομη;",
+                      ));
+                      if (!confirmed) {
+                        setDraggedTaskId(null);
+                        return;
+                      }
+                      placementMutation.mutate({ taskId: sourceId, parentTaskId: null });
+                    }
+                    reorderTask(sourceId, t.id, mode);
+                    setDraggedTaskId(null);
                   }}
                   className={`cursor-pointer border-b transition-colors ${
+                    dropTarget?.taskId === t.id && dropTarget.mode === "before"
+                      ? "border-t-2 border-t-primary "
+                      : dropTarget?.taskId === t.id && dropTarget.mode === "after"
+                        ? "border-b-2 border-b-primary "
+                        : dropTarget?.taskId === t.id
+                          ? "outline outline-2 outline-primary/70 bg-primary/10 "
+                          : ""
+                  }${
                     selectedTaskId === t.id
                       ? "bg-primary/10 ring-1 ring-inset ring-primary/30"
                       : i % 2 === 0
@@ -689,8 +794,8 @@ export function TaskList({
                   </td>
                   <td data-task-column="priority" className="px-3 py-1.5 border-r">
                     {t.priority ? (
-                      <span className={`inline-flex items-center gap-1 text-xs ${PRIORITY_META[t.priority]?.className ?? ""}`}>
-                        <span>{PRIORITY_META[t.priority]?.icon}</span> {t.priority}
+                      <span className={`inline-flex items-center text-xs ${PRIORITY_META[t.priority]?.className ?? ""}`}>
+                        {t.priority}
                       </span>
                     ) : (
                       <span className="text-xs text-muted-foreground">—</span>

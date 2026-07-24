@@ -14,12 +14,12 @@ export const STATUS_META: Record<string, { label: string; className: string }> =
 
 export const ALL_STATUSES = Object.keys(STATUS_META);
 
-export const PRIORITY_META: Record<string, { className: string; icon: string }> = {
-  Highest: { className: "text-red-600 dark:text-red-400 font-semibold",    icon: "⬆⬆" },
-  High:    { className: "text-orange-600 dark:text-orange-400 font-semibold", icon: "⬆" },
-  Medium:  { className: "text-amber-600 dark:text-amber-400",              icon: "▲" },
-  Low:     { className: "text-sky-600 dark:text-sky-400",                  icon: "⬇" },
-  Lowest:  { className: "text-slate-500",                                  icon: "⬇⬇" },
+export const PRIORITY_META: Record<string, { className: string }> = {
+  Highest: { className: "text-red-600 dark:text-red-400 font-semibold" },
+  High:    { className: "text-orange-600 dark:text-orange-400 font-semibold" },
+  Medium:  { className: "text-amber-600 dark:text-amber-400" },
+  Low:     { className: "text-sky-600 dark:text-sky-400" },
+  Lowest:  { className: "text-slate-500" },
 };
 
 export const ALL_PRIORITIES = ["Highest", "High", "Medium", "Low", "Lowest"];
