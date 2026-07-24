@@ -74,6 +74,7 @@ export function TaskList({
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const draggedTaskIdRef = useRef<string | null>(null);
   const pageSize = 50;
 
   const fetchTasks = useServerFn(listTasks);
@@ -148,10 +149,12 @@ export function TaskList({
       placeTask({ data }),
     onSuccess: () => {
       toast.success(tr("Task hierarchy updated", "Η ιεραρχία της εργασίας ενημερώθηκε"));
+      draggedTaskIdRef.current = null;
       setDraggedTaskId(null);
       qc.invalidateQueries({ queryKey: ["tasks"] });
     },
     onError: (error: Error) => {
+      draggedTaskIdRef.current = null;
       setDraggedTaskId(null);
       toast.error(error.message);
     },
@@ -296,6 +299,20 @@ export function TaskList({
     setSorts([]);
     persistManualOrder(ids);
     toast.success(tr("Task position updated", "Η θέση της εργασίας ενημερώθηκε"));
+  };
+
+  const dropModeForRow = (row: HTMLTableRowElement, clientY: number): DropMode => {
+    const rect = row.getBoundingClientRect();
+    const ratio = (clientY - rect.top) / Math.max(rect.height, 1);
+    if (ratio < 0.3) return "before";
+    if (ratio > 0.7) return "after";
+    return "child";
+  };
+
+  const clearTaskDrag = () => {
+    draggedTaskIdRef.current = null;
+    setDraggedTaskId(null);
+    setDropTarget(null);
   };
 
   const activeFilterCount = useMemo(() => {
@@ -523,21 +540,35 @@ export function TaskList({
 
       {/* Table */}
       {draggedTaskId && (
-        <div
-          className="rounded-md border-2 border-dashed border-primary/50 bg-primary/5 p-3 text-center text-sm font-medium"
-          onDragOver={(event) => event.preventDefault()}
-          onDrop={(event) => {
-            event.preventDefault();
-            if (!draggedTaskId) return;
-            if (window.confirm(tr(
-              "Make this subtask a standalone task?",
-              "Να γίνει αυτή η υποεργασία αυτόνομη εργασία;",
-            ))) {
-              placementMutation.mutate({ taskId: draggedTaskId, parentTaskId: null });
-            }
-          }}
-        >
-          {tr("Drop here to make it a standalone task", "Αφήστε εδώ για να γίνει αυτόνομη εργασία")}
+        <div className="sticky top-2 z-30 space-y-2 rounded-md border border-primary/40 bg-background/95 p-2 shadow-md backdrop-blur">
+          <div className="text-center text-xs font-medium text-muted-foreground">
+            {tr(
+              "Drop above or below a row to reposition · Drop in the centre to create a subtask",
+              "Αφήστε πάνω ή κάτω από μια γραμμή για αλλαγή θέσης · Αφήστε στο κέντρο για δημιουργία υποεργασίας",
+            )}
+          </div>
+          <div
+            className="rounded-md border-2 border-dashed border-primary/50 bg-primary/5 p-2 text-center text-sm font-medium"
+            onDragOver={(event) => {
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "move";
+            }}
+            onDrop={(event) => {
+              event.preventDefault();
+              const sourceId = draggedTaskIdRef.current || event.dataTransfer.getData("text/task-id");
+              if (!sourceId) return;
+              if (window.confirm(tr(
+                "Make this subtask a standalone task?",
+                "Να γίνει αυτή η υποεργασία αυτόνομη εργασία;",
+              ))) {
+                placementMutation.mutate({ taskId: sourceId, parentTaskId: null });
+              } else {
+                clearTaskDrag();
+              }
+            }}
+          >
+            {tr("Drop here to make it a standalone task", "Αφήστε εδώ για να γίνει αυτόνομη εργασία")}
+          </div>
         </div>
       )}
       <div className="border rounded-md overflow-auto bg-card">
@@ -633,23 +664,12 @@ export function TaskList({
               pageRows.map((t, i) => (
                 <tr
                   key={t.id}
-                  draggable={!isImpersonating}
-                  onDragStart={(event) => {
-                    setDraggedTaskId(t.id);
-                    event.dataTransfer.effectAllowed = "move";
-                    event.dataTransfer.setData("text/task-id", t.id);
-                  }}
-                  onDragEnd={() => {
-                    setDraggedTaskId(null);
-                    setDropTarget(null);
-                  }}
                   onDragOver={(event) => {
-                    if (draggedTaskId && draggedTaskId !== t.id) {
+                    const sourceId = draggedTaskIdRef.current || draggedTaskId;
+                    if (sourceId && sourceId !== t.id) {
                       event.preventDefault();
                       event.dataTransfer.dropEffect = "move";
-                      const rect = event.currentTarget.getBoundingClientRect();
-                      const ratio = (event.clientY - rect.top) / Math.max(rect.height, 1);
-                      const mode: DropMode = ratio < 0.25 ? "before" : ratio > 0.75 ? "after" : "child";
+                      const mode = dropModeForRow(event.currentTarget, event.clientY);
                       setDropTarget({ taskId: t.id, mode });
                     }
                   }}
@@ -661,10 +681,13 @@ export function TaskList({
                   onDrop={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
-                    const sourceId = draggedTaskId || event.dataTransfer.getData("text/task-id");
+                    const sourceId = draggedTaskIdRef.current
+                      || draggedTaskId
+                      || event.dataTransfer.getData("text/task-id")
+                      || event.dataTransfer.getData("text/plain");
                     if (!sourceId || sourceId === t.id) return;
                     const source = rows.find((task) => task.id === sourceId);
-                    const mode = dropTarget?.taskId === t.id ? dropTarget.mode : "child";
+                    const mode = dropModeForRow(event.currentTarget, event.clientY);
                     setDropTarget(null);
                     if (mode === "child") {
                       const confirmed = window.confirm(tr(
@@ -672,7 +695,7 @@ export function TaskList({
                         `Είστε βέβαιοι ότι θέλετε το ${source?.task_key ?? "task"} να γίνει υποεργασία του ${t.task_key};`,
                       ));
                       if (confirmed) placementMutation.mutate({ taskId: sourceId, parentTaskId: t.id });
-                      else setDraggedTaskId(null);
+                      else clearTaskDrag();
                       return;
                     }
                     if (source?.parent_id) {
@@ -681,13 +704,13 @@ export function TaskList({
                         "Να αφαιρεθεί αυτή η υποεργασία από τη γονική εργασία και να γίνει αυτόνομη;",
                       ));
                       if (!confirmed) {
-                        setDraggedTaskId(null);
+                        clearTaskDrag();
                         return;
                       }
                       placementMutation.mutate({ taskId: sourceId, parentTaskId: null });
                     }
                     reorderTask(sourceId, t.id, mode);
-                    setDraggedTaskId(null);
+                    clearTaskDrag();
                   }}
                   className={`cursor-pointer border-b transition-colors ${
                     dropTarget?.taskId === t.id && dropTarget.mode === "before"
@@ -698,7 +721,9 @@ export function TaskList({
                           ? "outline outline-2 outline-primary/70 bg-primary/10 "
                           : ""
                   }${
-                    selectedTaskId === t.id
+                    draggedTaskId === t.id
+                      ? "opacity-45 "
+                      : selectedTaskId === t.id
                       ? "bg-primary/10 ring-1 ring-inset ring-primary/30"
                       : i % 2 === 0
                         ? "bg-background hover:bg-accent/50"
@@ -749,7 +774,41 @@ export function TaskList({
                       />
                     ) : (
                       <div className={`truncate flex items-center gap-1 ${t.parent_id ? "pl-5" : ""}`} title={t.title}>
-                        <GripVertical className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          draggable={!isImpersonating}
+                          data-task-drag-handle
+                          aria-label={tr(`Drag ${t.task_key}`, `Μετακίνηση ${t.task_key}`)}
+                          title={tr(
+                            "Drag to reposition. Drop in the centre of another task to make it a subtask.",
+                            "Σύρετε για αλλαγή θέσης. Αφήστε στο κέντρο άλλης εργασίας για να γίνει υποεργασία.",
+                          )}
+                          onClick={(event) => event.stopPropagation()}
+                          onDoubleClick={(event) => event.stopPropagation()}
+                          onDragStart={(event) => {
+                            if (isImpersonating) {
+                              event.preventDefault();
+                              return;
+                            }
+                            clearClickTimer();
+                            setEditingTaskId(null);
+                            draggedTaskIdRef.current = t.id;
+                            setDraggedTaskId(t.id);
+                            event.dataTransfer.effectAllowed = "move";
+                            event.dataTransfer.setData("text/task-id", t.id);
+                            event.dataTransfer.setData("text/plain", t.id);
+                            event.dataTransfer.setDragImage(event.currentTarget, 8, 8);
+                          }}
+                          onDragEnd={clearTaskDrag}
+                          className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded border border-transparent select-none ${
+                            isImpersonating
+                              ? "cursor-not-allowed opacity-35"
+                              : "cursor-grab hover:border-border hover:bg-accent active:cursor-grabbing"
+                          }`}
+                        >
+                          <GripVertical className="h-4 w-4 text-muted-foreground" />
+                        </span>
                         {t.parent_id && <span className="text-muted-foreground">↳</span>}
                         <span className="truncate">{t.title}</span>
                       </div>
