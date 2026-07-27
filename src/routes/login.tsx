@@ -187,7 +187,7 @@ function LoginPage() {
               </div>
               <Button type="submit" className="w-full" disabled={loading}>
                 {loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                {tr("Send verification code", "Αποστολή κωδικού επαλήθευσης")}
+                {tr("Send sign-in link", "Αποστολή link σύνδεσης")}
               </Button>
               <p className="text-xs text-muted-foreground text-center pt-2">
                 {tr("Access is restricted to Smart Homes users. Contact an administrator to create an account.", "Πρόσβαση μόνο για χρήστες της Smart Homes. Επικοινώνησε με τον διαχειριστή για δημιουργία λογαριασμού.")}
