@@ -1,6 +1,6 @@
 {
-  "name": "SHG Reloaded",
-  "short_name": "SHG",
+  "name": "SHG Task Manager",
+  "short_name": "SHG Tasks",
   "description": "SHG task and team management",
   "lang": "en",
   "start_url": "./index.html",
