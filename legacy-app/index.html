@@ -15,7 +15,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="styles.css?v=219" />
+    <link rel="stylesheet" href="styles.css?v=220" />
   </head>
   <body>
     <div class="app-shell">
@@ -42,11 +42,14 @@
           <div id="projectList"></div>
         </div>
 
-        <div class="sidebar-footer">
+        <div id="sidebarUserMenu" class="sidebar-user-menu hidden" role="menu">
+          <button id="logoutBtn" type="button" role="menuitem"><span>↪</span> Logout</button>
+        </div>
+        <button id="sidebarUserButton" class="sidebar-footer" type="button" aria-haspopup="menu" aria-expanded="false">
           <div id="currentUserAvatar" class="avatar">VS</div>
           <div class="user-meta"><strong id="currentUserName">Victor Stavropoulos</strong><span id="roleLabel">Administrator</span></div>
-          <button class="dots" type="button" disabled aria-label="Profile options unavailable">•••</button>
-        </div>
+          <span class="dots" aria-hidden="true">•••</span>
+        </button>
       </aside>
 
       <main>
@@ -106,7 +109,28 @@
     </div>
 
     <div id="toast" class="toast"></div>
+    <div id="authGate" class="auth-gate hidden" aria-live="polite">
+      <section class="auth-card" aria-labelledby="authTitle">
+        <div class="auth-brand"><span>S</span><div><strong>SHG</strong><small>Task Manager</small></div></div>
+        <h1 id="authTitle">Sign in</h1>
+        <p id="authMessage">Enter your company email and we will send you an 8-digit verification code.</p>
+        <form id="authEmailForm">
+          <label for="authEmail">Email</label>
+          <input id="authEmail" type="email" autocomplete="email" required placeholder="name@shd.global" />
+          <button id="sendOtpBtn" type="submit">Send verification code</button>
+        </form>
+        <form id="authOtpForm" class="hidden">
+          <button id="changeAuthEmail" class="auth-back" type="button">← Change email</button>
+          <label for="authOtp">8-digit code</label>
+          <input id="authOtp" type="text" inputmode="numeric" autocomplete="one-time-code" minlength="8" maxlength="8" pattern="[0-9]{8}" required placeholder="00000000" />
+          <button id="verifyOtpBtn" type="submit">Verify and sign in</button>
+          <button id="resendOtpBtn" class="auth-secondary" type="button">Send a new code</button>
+        </form>
+        <p id="authError" class="auth-error hidden"></p>
+      </section>
+    </div>
     <script src="bootstrap-data.js"></script>
+    <script src="auth.js?v=220"></script>
     <script src="jira-tasks.js"></script>
     <script src="victor-main-filter.js"></script>
     <script src="jira-comments-01.js"></script>
@@ -125,6 +149,6 @@
     <script src="jira-comments-14.js"></script>
     <script src="jira-comments-15.js"></script>
     <script src="jira-comments-16.js"></script>
-    <script src="app.js?v=219"></script>
+    <script src="app.js?v=220"></script>
   </body>
 </html>
