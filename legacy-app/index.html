@@ -15,7 +15,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="styles.css?v=220" />
+    <link rel="stylesheet" href="styles.css?v=221" />
   </head>
   <body>
     <div class="app-shell">
@@ -130,7 +130,7 @@
       </section>
     </div>
     <script src="bootstrap-data.js"></script>
-    <script src="auth.js?v=220"></script>
+    <script src="auth.js?v=221"></script>
     <script src="jira-tasks.js"></script>
     <script src="victor-main-filter.js"></script>
     <script src="jira-comments-01.js"></script>
@@ -149,6 +149,33 @@
     <script src="jira-comments-14.js"></script>
     <script src="jira-comments-15.js"></script>
     <script src="jira-comments-16.js"></script>
-    <script src="app.js?v=220"></script>
+    <script src="app.js?v=221"></script>
+    <script>
+      (() => {
+        const userButton = document.getElementById('sidebarUserButton');
+        const userMenu = document.getElementById('sidebarUserMenu');
+        const logoutButton = document.getElementById('logoutBtn');
+        if (!userButton || !userMenu || !logoutButton) return;
+
+        userButton.addEventListener('click', event => {
+          event.stopPropagation();
+          const opening = userMenu.classList.contains('hidden');
+          userMenu.classList.toggle('hidden', !opening);
+          userButton.setAttribute('aria-expanded', String(opening));
+        });
+
+        logoutButton.addEventListener('click', event => {
+          event.stopPropagation();
+          window.shgLogout?.();
+        });
+
+        document.addEventListener('click', event => {
+          if (!userMenu.contains(event.target) && !userButton.contains(event.target)) {
+            userMenu.classList.add('hidden');
+            userButton.setAttribute('aria-expanded', 'false');
+          }
+        });
+      })();
+    </script>
   </body>
 </html>
