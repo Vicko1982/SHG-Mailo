@@ -28,9 +28,8 @@ function LoginPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
 
-  // Email OTP step (for admin / main_admin)
+  // Passwordless email OTP step for every registered user.
   const [otpStep, setOtpStep] = useState(false);
   const [otpEmail, setOtpEmail] = useState("");
   const [otpCode, setOtpCode] = useState("");
@@ -57,46 +56,22 @@ function LoginPage() {
   async function handleLogin(e: FormEvent) {
     e.preventDefault();
     setLoading(true);
-    const { data: signInData, error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error || !signInData.user) {
-      setLoading(false);
-      toast.error(error?.message ?? tr("Login failed", "Σφάλμα σύνδεσης"));
-      return;
-    }
-
-    // Admin and Main Admin accounts require a second verification step.
-    const { data: roles } = await supabase
-      .from("user_roles")
-      .select("role")
-      .eq("user_id", signInData.user.id);
-    const isPrivileged = (roles ?? []).some(
-      (r) => r.role === "admin" || r.role === "main_admin",
-    );
-
-    if (!isPrivileged) {
-      setLoading(false);
-      toast.success(tr("Welcome!", "Καλωσόρισες!"));
-      router.navigate({ to: "/" });
-      return;
-    }
-
-    // Sign out the password session and send a one-time code by email.
-    await supabase.auth.signOut();
-    const { error: otpError } = await supabase.auth.signInWithOtp({
-      email,
+    const normalizedEmail = email.trim().toLowerCase();
+    const { error } = await supabase.auth.signInWithOtp({
+      email: normalizedEmail,
       options: {
         shouldCreateUser: false,
       },
     });
     setLoading(false);
-    if (otpError) {
-      toast.error(otpError.message);
+    if (error) {
+      toast.error(error.message);
       return;
     }
-    setOtpEmail(email);
+
+    setOtpEmail(normalizedEmail);
     setOtpCode("");
     setOtpStep(true);
-    setPassword("");
     toast.success(tr("An 8-digit verification code was sent to your email.", "Στάλθηκε οκταψήφιος κωδικός επαλήθευσης στο email σου."));
   }
 
@@ -175,7 +150,7 @@ function LoginPage() {
           {otpStep ? (
             <form onSubmit={handleVerifyOtp} className="space-y-4">
               <div>
-                <h2 className="font-semibold">{tr("Administrator verification", "Επαλήθευση διαχειριστή")}</h2>
+                <h2 className="font-semibold">{tr("Email verification", "Επαλήθευση email")}</h2>
                 <p className="text-xs text-muted-foreground mt-1">
                   {tr("We sent an 8-digit verification code to", "Στείλαμε έναν οκταψήφιο κωδικό επαλήθευσης στο")} <strong>{otpEmail}</strong>.
                 </p>
@@ -252,20 +227,9 @@ function LoginPage() {
                   onChange={(e) => setEmail(e.target.value)}
                 />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="login-password">{tr("Password", "Κωδικός")}</Label>
-                <Input
-                  id="login-password"
-                  type="password"
-                  required
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                />
-              </div>
               <Button type="submit" className="w-full" disabled={loading}>
                 {loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                {tr("Sign in", "Σύνδεση")}
+                {tr("Send verification code", "Αποστολή κωδικού επαλήθευσης")}
               </Button>
               <p className="text-xs text-muted-foreground text-center pt-2">
                 {tr("Access is restricted to Smart Homes users. Contact an administrator to create an account.", "Πρόσβαση μόνο για χρήστες της Smart Homes. Επικοινώνησε με τον διαχειριστή για δημιουργία λογαριασμού.")}
