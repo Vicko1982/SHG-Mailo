@@ -8,6 +8,7 @@ import { Card } from "@/components/ui/card";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useLanguage } from "@/lib/language";
+import { createEmailOnlyLogin } from "@/lib/demo-auth.functions";
 
 export const Route = createFileRoute("/login")({
   head: () => ({
@@ -28,11 +29,6 @@ function LoginPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState("");
-
-  // Passwordless magic-link sign-in for every registered user.
-  const [linkSent, setLinkSent] = useState(false);
-  const [signInEmail, setSignInEmail] = useState("");
-  const [resendLoading, setResendLoading] = useState(false);
 
   // Bootstrap (πρώτος admin)
   const [bootstrapAvailable, setBootstrapAvailable] = useState(false);
@@ -56,37 +52,19 @@ function LoginPage() {
     e.preventDefault();
     setLoading(true);
     const normalizedEmail = email.trim().toLowerCase();
-    const { error } = await supabase.auth.signInWithOtp({
-      email: normalizedEmail,
-      options: {
-        shouldCreateUser: false,
-        emailRedirectTo: window.location.origin,
-      },
-    });
-    setLoading(false);
-    if (error) {
-      toast.error(error.message);
-      return;
-    }
-
-    setSignInEmail(normalizedEmail);
-    setLinkSent(true);
-    toast.success(tr("A secure sign-in link was sent to your email.", "Στάλθηκε ασφαλές link σύνδεσης στο email σου."));
-  }
-
-  async function handleResendLink() {
-    setResendLoading(true);
-    const { error } = await supabase.auth.signInWithOtp({
-      email: signInEmail,
-      options: {
-        shouldCreateUser: false,
-        emailRedirectTo: window.location.origin,
-      },
-    });
-    setResendLoading(false);
-    if (error) toast.error(error.message);
-    else {
-      toast.success(tr("A new sign-in link was sent.", "Στάλθηκε νέο link σύνδεσης."));
+    try {
+      const { tokenHash } = await createEmailOnlyLogin({ data: { email: normalizedEmail } });
+      const { error } = await supabase.auth.verifyOtp({
+        token_hash: tokenHash,
+        type: "magiclink",
+      });
+      if (error) throw error;
+      toast.success(tr("Welcome!", "Καλωσόρισες!"));
+      router.navigate({ to: "/", replace: true });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : tr("Login failed", "Σφάλμα σύνδεσης"));
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -121,33 +99,7 @@ function LoginPage() {
           </p>
         </div>
         <Card className="p-6">
-          {linkSent ? (
-            <div className="space-y-4">
-              <div>
-                <h2 className="font-semibold">{tr("Check your email", "Έλεγξε το email σου")}</h2>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {tr("We sent a secure sign-in link to", "Στείλαμε ασφαλές link σύνδεσης στο")} <strong>{signInEmail}</strong>.
-                </p>
-              </div>
-              <p className="text-sm">
-                {tr(
-                  "Open the email and press “Sign in”. You will return here and be signed in automatically.",
-                  "Άνοιξε το email και πάτησε «Sign in». Θα επιστρέψεις εδώ και θα συνδεθείς αυτόματα.",
-                )}
-              </p>
-              <div className="flex justify-between text-xs">
-                <button type="button" className="text-muted-foreground hover:underline" onClick={() => setLinkSent(false)}>
-                  ← {tr("Back", "Πίσω")}
-                </button>
-                <button type="button" className="text-muted-foreground hover:underline" onClick={handleResendLink} disabled={resendLoading}>
-                  {tr("Resend link", "Επαναποστολή link")}
-                </button>
-              </div>
-              <p className="text-xs text-muted-foreground text-center">
-                {tr("If you cannot find the email, check your spam folder.", "Αν δεν βλέπεις το email, έλεγξε και τον φάκελο ανεπιθύμητης αλληλογραφίας.")}
-              </p>
-            </div>
-          ) : showBootstrap && bootstrapAvailable ? (
+          {showBootstrap && bootstrapAvailable ? (
             <form onSubmit={handleBootstrap} className="space-y-4">
               <div>
                 <h2 className="font-semibold">{tr("Create first administrator", "Δημιουργία πρώτου διαχειριστή")}</h2>
@@ -187,10 +139,13 @@ function LoginPage() {
               </div>
               <Button type="submit" className="w-full" disabled={loading}>
                 {loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                {tr("Send sign-in link", "Αποστολή link σύνδεσης")}
+                {tr("Sign in", "Σύνδεση")}
               </Button>
               <p className="text-xs text-muted-foreground text-center pt-2">
-                {tr("Access is restricted to Smart Homes users. Contact an administrator to create an account.", "Πρόσβαση μόνο για χρήστες της Smart Homes. Επικοινώνησε με τον διαχειριστή για δημιουργία λογαριασμού.")}
+                {tr(
+                  "Temporary email-only login. Email verification will be enabled later.",
+                  "Προσωρινή σύνδεση μόνο με email. Η επαλήθευση email θα ενεργοποιηθεί αργότερα.",
+                )}
               </p>
             </form>
           )}
