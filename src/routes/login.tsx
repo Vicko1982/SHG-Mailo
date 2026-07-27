@@ -29,11 +29,10 @@ function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState("");
 
-  // Passwordless email OTP step for every registered user.
-  const [otpStep, setOtpStep] = useState(false);
-  const [otpEmail, setOtpEmail] = useState("");
-  const [otpCode, setOtpCode] = useState("");
-  const [otpLoading, setOtpLoading] = useState(false);
+  // Passwordless magic-link sign-in for every registered user.
+  const [linkSent, setLinkSent] = useState(false);
+  const [signInEmail, setSignInEmail] = useState("");
+  const [resendLoading, setResendLoading] = useState(false);
 
   // Bootstrap (πρώτος admin)
   const [bootstrapAvailable, setBootstrapAvailable] = useState(false);
@@ -61,6 +60,7 @@ function LoginPage() {
       email: normalizedEmail,
       options: {
         shouldCreateUser: false,
+        emailRedirectTo: window.location.origin,
       },
     });
     setLoading(false);
@@ -69,50 +69,24 @@ function LoginPage() {
       return;
     }
 
-    setOtpEmail(normalizedEmail);
-    setOtpCode("");
-    setOtpStep(true);
-    toast.success(tr("An 8-digit verification code was sent to your email.", "Στάλθηκε οκταψήφιος κωδικός επαλήθευσης στο email σου."));
+    setSignInEmail(normalizedEmail);
+    setLinkSent(true);
+    toast.success(tr("A secure sign-in link was sent to your email.", "Στάλθηκε ασφαλές link σύνδεσης στο email σου."));
   }
 
-  async function handleVerifyOtp(e: FormEvent) {
-    e.preventDefault();
-    const normalizedCode = otpCode.replace(/\D/g, "");
-    if (normalizedCode.length !== 8) {
-      toast.error(tr("Enter the 8-digit code.", "Πληκτρολόγησε τον οκταψήφιο κωδικό."));
-      return;
-    }
-
-    setOtpLoading(true);
-    const { error } = await supabase.auth.verifyOtp({
-      email: otpEmail,
-      token: normalizedCode,
-      type: "email",
-    });
-    setOtpLoading(false);
-
-    if (error) {
-      toast.error(error.message);
-      return;
-    }
-
-    toast.success(tr("Verification completed. Welcome!", "Η επαλήθευση ολοκληρώθηκε. Καλωσόρισες!"));
-    router.navigate({ to: "/", replace: true });
-  }
-
-  async function handleResendOtp() {
-    setOtpLoading(true);
+  async function handleResendLink() {
+    setResendLoading(true);
     const { error } = await supabase.auth.signInWithOtp({
-      email: otpEmail,
+      email: signInEmail,
       options: {
         shouldCreateUser: false,
+        emailRedirectTo: window.location.origin,
       },
     });
-    setOtpLoading(false);
+    setResendLoading(false);
     if (error) toast.error(error.message);
     else {
-      setOtpCode("");
-      toast.success(tr("A new 8-digit code was sent.", "Στάλθηκε νέος οκταψήφιος κωδικός."));
+      toast.success(tr("A new sign-in link was sent.", "Στάλθηκε νέο link σύνδεσης."));
     }
   }
 
@@ -147,48 +121,32 @@ function LoginPage() {
           </p>
         </div>
         <Card className="p-6">
-          {otpStep ? (
-            <form onSubmit={handleVerifyOtp} className="space-y-4">
+          {linkSent ? (
+            <div className="space-y-4">
               <div>
-                <h2 className="font-semibold">{tr("Email verification", "Επαλήθευση email")}</h2>
+                <h2 className="font-semibold">{tr("Check your email", "Έλεγξε το email σου")}</h2>
                 <p className="text-xs text-muted-foreground mt-1">
-                  {tr("We sent an 8-digit verification code to", "Στείλαμε έναν οκταψήφιο κωδικό επαλήθευσης στο")} <strong>{otpEmail}</strong>.
+                  {tr("We sent a secure sign-in link to", "Στείλαμε ασφαλές link σύνδεσης στο")} <strong>{signInEmail}</strong>.
                 </p>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="admin-otp">{tr("Verification code", "Κωδικός επαλήθευσης")}</Label>
-                <Input
-                  id="admin-otp"
-                  type="text"
-                  required
-                  autoFocus
-                  autoComplete="one-time-code"
-                  inputMode="numeric"
-                  pattern="[0-9]{8}"
-                  minLength={8}
-                  maxLength={8}
-                  placeholder="00000000"
-                  value={otpCode}
-                  onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, "").slice(0, 8))}
-                  className="text-center text-lg tracking-[0.35em]"
-                />
-              </div>
-              <Button type="submit" className="w-full" disabled={otpLoading || otpCode.length !== 8}>
-                {otpLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                {tr("Verify & sign in", "Επαλήθευση & σύνδεση")}
-              </Button>
+              <p className="text-sm">
+                {tr(
+                  "Open the email and press “Sign in”. You will return here and be signed in automatically.",
+                  "Άνοιξε το email και πάτησε «Sign in». Θα επιστρέψεις εδώ και θα συνδεθείς αυτόματα.",
+                )}
+              </p>
               <div className="flex justify-between text-xs">
-                <button type="button" className="text-muted-foreground hover:underline" onClick={() => setOtpStep(false)}>
+                <button type="button" className="text-muted-foreground hover:underline" onClick={() => setLinkSent(false)}>
                   ← {tr("Back", "Πίσω")}
                 </button>
-                <button type="button" className="text-muted-foreground hover:underline" onClick={handleResendOtp} disabled={otpLoading}>
-                  {tr("Resend code", "Επαναποστολή κωδικού")}
+                <button type="button" className="text-muted-foreground hover:underline" onClick={handleResendLink} disabled={resendLoading}>
+                  {tr("Resend link", "Επαναποστολή link")}
                 </button>
               </div>
               <p className="text-xs text-muted-foreground text-center">
                 {tr("If you cannot find the email, check your spam folder.", "Αν δεν βλέπεις το email, έλεγξε και τον φάκελο ανεπιθύμητης αλληλογραφίας.")}
               </p>
-            </form>
+            </div>
           ) : showBootstrap && bootstrapAvailable ? (
             <form onSubmit={handleBootstrap} className="space-y-4">
               <div>
