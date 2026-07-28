@@ -52,7 +52,10 @@
       const text = await response.text();
       const body = text ? JSON.parse(text) : null;
       if (!response.ok) {
-        throw new Error(body?.message || body?.error_description || body?.hint || `Database request failed (${response.status})`);
+        const error = new Error(body?.message || body?.error_description || body?.hint || `Database request failed (${response.status})`);
+        error.status = response.status;
+        error.code = body?.code || '';
+        throw error;
       }
       return body;
     } finally {
@@ -173,6 +176,11 @@
 
   async function loadRemoteData() {
     if (!enabled()) return { remote: false };
+    let pendingLocalTasks = [];
+    try {
+      pendingLocalTasks = (JSON.parse(localStorage.getItem(TASK_KEY)) || [])
+        .filter(task => task && !task._supabaseId);
+    } catch {}
 
     const [profiles, roles, spaces, members, tasks, comments, activity] = await Promise.all([
       fetchAll('profiles', 'id,full_name,email,initials,is_active,last_login'),
@@ -214,9 +222,13 @@
 
     const parentKeyById = new Map(tasks.map(row => [row.id, row.task_key]));
     const localTasks = tasks.map(row => taskFromRow(row, parentKeyById, commentsByTask));
+    for (const task of pendingLocalTasks) {
+      localTasks.unshift(task);
+    }
     cache.tasks.clear();
     cache.taskHashes.clear();
     for (const task of localTasks) {
+      if (!task._supabaseId) continue;
       cache.tasks.set(task._supabaseId, task);
       cache.taskHashes.set(task._supabaseId, taskHash(task));
     }
@@ -254,7 +266,16 @@
     window.dispatchEvent(new CustomEvent('shg:remote-ready', {
       detail: { tasks: localTasks.length, comments: comments.length, spaces: spaces.length },
     }));
+    if (pendingLocalTasks.length) {
+      setTimeout(() => syncTasks(localTasks, localActivity), 0);
+    }
     return { remote: true, tasks: localTasks.length, comments: comments.length, spaces: spaces.length };
+  }
+
+  function incrementTaskKey(taskKey) {
+    const match = String(taskKey || '').match(/^(.*?)-(\d+)$/);
+    if (!match) return `${taskKey}-2`;
+    return `${match[1]}-${Number(match[2]) + 1}`;
   }
 
   function taskPayload(task) {
@@ -352,13 +373,26 @@
       });
       id = updated?.[0]?.id || id;
     } else {
-      const inserted = await request('/rest/v1/tasks?on_conflict=task_key&select=id,task_key', {
-        method: 'POST',
-        headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
-        body: JSON.stringify(payload),
-      });
+      let inserted = null;
+      let candidateKey = payload.task_key;
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        payload.task_key = candidateKey;
+        if (payload.legacy_data) payload.legacy_data.id = candidateKey;
+        try {
+          inserted = await request('/rest/v1/tasks?select=id,task_key', {
+            method: 'POST',
+            headers: { Prefer: 'return=representation' },
+            body: JSON.stringify(payload),
+          });
+          break;
+        } catch (error) {
+          if (error.status !== 409 && error.code !== '23505') throw error;
+          candidateKey = incrementTaskKey(candidateKey);
+        }
+      }
       id = inserted?.[0]?.id;
       if (!id) throw new Error(`Task ${task.id} was not saved`);
+      task.id = inserted[0].task_key;
       task._supabaseId = id;
     }
     cache.tasks.set(id, task);
