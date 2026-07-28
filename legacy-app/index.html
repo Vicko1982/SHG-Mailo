@@ -15,15 +15,14 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="styles.css?v=221" />
+    <link rel="stylesheet" href="styles.css?v=228" />
   </head>
   <body>
     <div class="app-shell">
       <button id="sidebarToggle" class="sidebar-toggle" type="button" aria-label="Collapse sidebar" title="Collapse sidebar">‹</button>
       <aside class="sidebar">
         <div class="brand">
-          <div class="brand-mark">S</div>
-          <div><strong>SHG</strong><span>Task Manager</span></div>
+          <img class="brand-logo" src="icons/mailo-logo.jpeg" alt="Mailo" />
         </div>
 
         <button id="newTaskBtn" class="sidebar-new-task" type="button"><span>+</span> New task</button>
@@ -60,7 +59,7 @@
             <button class="data-transfer-btn main-admin-only" type="button" onclick="exportApplicationData()">Export Data</button>
             <button class="data-transfer-btn main-admin-only" type="button" onclick="document.getElementById('applicationDataImport').click()">Import Data</button>
             <input id="applicationDataImport" class="hidden" type="file" accept="application/json,.json" onchange="importApplicationData(this)">
-            <label class="user-preview-switcher">View as User
+            <label class="user-preview-switcher main-admin-only">View as User
               <select id="userPreviewSelect"></select>
             </label>
           </div>
@@ -131,7 +130,7 @@
     </div>
     <script src="bootstrap-data.js"></script>
     <script src="auth.js?v=222"></script>
-    <script src="remote-sync.js?v=227"></script>
+    <script src="remote-sync.js?v=228"></script>
     <script>
       (async () => {
         try {
@@ -144,7 +143,7 @@
           'jira-tasks.js',
           'victor-main-filter.js',
           ...Array.from({ length: 16 }, (_, index) => `jira-comments-${String(index + 1).padStart(2, '0')}.js`),
-          'app.js?v=227',
+          'app.js?v=228',
         ];
         for (const source of scripts) {
           await new Promise((resolve, reject) => {

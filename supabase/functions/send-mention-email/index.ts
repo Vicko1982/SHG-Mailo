@@ -14,6 +14,7 @@ const RETRY_MINUTES = [5, 15, 30, 60];
 
 type Payload = {
   processQueue?: boolean;
+  notificationType?: "mention" | "task_created";
   taskId?: string;
   commentId?: string;
   taskKey?: string;
@@ -40,6 +41,7 @@ type QueueJob = {
   comment_text: string;
   task_url: string;
   attempt_count: number;
+  notification_type?: string;
 };
 
 function normalize(value: string): string {
@@ -76,6 +78,29 @@ function resolveRequestedProfiles(profiles: Profile[], names: string[]): Profile
 }
 
 function mailContent(job: QueueJob) {
+  if (job.notification_type === "task_created") {
+    const subject = `New task assigned: ${job.task_key}`;
+    const text = [
+      `${job.author_name} created a new task in SHG Task Manager.`,
+      "",
+      `Task: ${job.task_key} — ${job.task_title}`,
+      "",
+      `Open task: ${job.task_url}`,
+    ].join("\n");
+    const html = `
+      <div style="font-family:Arial,sans-serif;color:#172033;line-height:1.55;max-width:640px">
+        <h2 style="margin:0 0 18px">A new task was created</h2>
+        <p><strong>${escapeHtml(job.author_name)}</strong> created a task in which you are the Assignee, Supervisor, or Approver.</p>
+        <div style="padding:16px;border:1px solid #dfe5ee;border-radius:10px;background:#f8fafc">
+          <div style="font-size:12px;color:#667085;margin-bottom:5px">${escapeHtml(job.task_key)}</div>
+          <div style="font-size:18px;font-weight:700">${escapeHtml(job.task_title)}</div>
+        </div>
+        <p style="margin:22px 0">
+          <a href="${escapeHtml(job.task_url)}" style="display:inline-block;padding:11px 18px;border-radius:8px;background:#316ff6;color:white;text-decoration:none;font-weight:700">Open Task</a>
+        </p>
+      </div>`;
+    return { subject, text, html };
+  }
   const subject = `${job.author_name} mentioned you in ${job.task_key}`;
   const text = [
     `${job.author_name} mentioned you in a comment.`,
@@ -180,6 +205,7 @@ Deno.serve(async (request) => {
       auth: { persistSession: false, autoRefreshToken: false },
     });
     const payload = (await request.json()) as Payload;
+    const notificationType = payload.notificationType === "task_created" ? "task_created" : "mention";
 
     // The public cron wake-up can only process rows that already exist in the
     // protected queue. It cannot choose recipients or create email content.
@@ -234,6 +260,10 @@ Deno.serve(async (request) => {
       commentId = savedComment.id;
     }
 
+    if (notificationType === "task_created") {
+      comment = "A new task was created.";
+      commentId = `task-created:${taskKey}`;
+    }
     if (!taskKey || !taskTitle || !comment || !commentId) {
       throw new Error("Missing task or comment details");
     }
@@ -257,7 +287,8 @@ Deno.serve(async (request) => {
     const appUrl = (Deno.env.get("SHG_APP_URL") ?? "https://mailo.shd.global").replace(/\/+$/, "");
     const taskUrl = `${appUrl}/?task=${encodeURIComponent(taskKey)}`;
     const queueRows = recipients.map((recipient) => ({
-      dedupe_key: `${commentId}:${recipient.id}`,
+      dedupe_key: `${notificationType}:${commentId}:${recipient.id}`,
+      notification_type: notificationType,
       recipient_profile_id: recipient.id,
       recipient_email: recipient.email!,
       recipient_name: recipient.full_name,
