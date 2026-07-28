@@ -24,7 +24,7 @@ const PROJECTS = {
 };
 
 const PEOPLE = [
-  {name:'Agapi Zoannou',initials:'AZ'}, {name:'Alexandros',initials:'AL'},
+  {name:'Agapi Zoannou',initials:'AZ'}, {name:'Alexandros K',initials:'AL'},
   {name:'Chara Giannoula',initials:'CG'}, {name:'Chris Bourtzoulas',initials:'CB'},
   {name:'Dinos Stavropoulos',initials:'DS'}, {name:'Fang Gao',initials:'FG'},
   {name:'Fotis Fotinias',initials:'FF'}, {name:'Galini Stavropoulou',initials:'GS'},
@@ -52,7 +52,7 @@ function cancellationReasonFor(task){
   if(history){const reason=String(history).split(':').slice(1).join(':').trim();if(reason)return reason}
   return 'No cancellation reason was recorded for this imported task.';
 }
-const PERSONAL_SPACE_OWNERS = {AL:'Alexandros',AS:'Agapi Zoannou',VS:'Victor Stavropoulos',CGS:'Chara Giannoula',CBS:'Chris Bourtzoulas',DS:'Dinos Stavropoulos',FG:'Fang Gao',FF:'Fotis Fotinias',GS:'Galini Stavropoulou',IC:'Ifigenia Chrisoulaki',JT:'John Tzortzos',SI:'Sakis iliou',SHA:'Smart Homes Assistant',VK:'Vasilis Katsaros'};
+const PERSONAL_SPACE_OWNERS = {AL:'Alexandros K',AS:'Agapi Zoannou',VS:'Victor Stavropoulos',CGS:'Chara Giannoula',CBS:'Chris Bourtzoulas',DS:'Dinos Stavropoulos',FG:'Fang Gao',FF:'Fotis Fotinias',GS:'Galini Stavropoulou',IC:'Ifigenia Chrisoulaki',JT:'John Tzortzos',SI:'Sakis iliou',SHA:'Smart Homes Assistant',VK:'Vasilis Katsaros'};
 try{
   const savedSharedSpaces=JSON.parse(localStorage.getItem('shg-shared-space-definitions'));
   if(savedSharedSpaces&&typeof savedSharedSpaces==='object'){
@@ -184,7 +184,7 @@ function migratePersonalTaskKeys(tasks){
   return tasks
 }
 function loadTasks(){try{const tasks=migratePersonalTaskKeys(mergeImportedComments(JSON.parse(localStorage.getItem('shg-tasks-v5'))||structuredClone(window.JIRA_TASKS||seedTasks)));if(Object.keys(PERSONAL_KEY_MIGRATION).length)localStorage.setItem('shg-tasks-v5',JSON.stringify(tasks));return tasks}catch{return migratePersonalTaskKeys(mergeImportedComments(structuredClone(window.JIRA_TASKS||seedTasks)))}}
-function save(){captureTaskActivity();const key='shg-tasks-v5',previous=localStorage.getItem(key);registerUndo(key,previous,()=>location.reload());localStorage.setItem(key,JSON.stringify(state.tasks))}
+function save(){captureTaskActivity();const key='shg-tasks-v5',previous=localStorage.getItem(key);registerUndo(key,previous,()=>location.reload());localStorage.setItem(key,JSON.stringify(state.tasks));window.shgQueueRemoteSync?.(state.tasks,state.activityLog)}
 function taskSupervisor(task){return task?.supervisor??(window.VICTOR_MAIN_FILTER||[]).find(row=>row.id===task?.id)?.supervisor??''}
 function taskApprover(task){return task?.approver??(window.VICTOR_MAIN_FILTER||[]).find(row=>row.id===task?.id)?.approver??DEFAULT_APPROVER}
 function isTaskSupervisor(task){return !!task&&taskSupervisor(task)===CURRENT_USER}

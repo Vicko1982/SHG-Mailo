@@ -5,7 +5,7 @@
   const AUTH_REQUIRED = !['127.0.0.1', 'localhost'].includes(location.hostname) || new URLSearchParams(location.search).get('auth') === '1';
   const USER_NAMES = {
     'agapi@shd.global': 'Agapi Zoannou',
-    'alexandros@shd.global': 'Alexandros',
+    'alexandros@shd.global': 'Alexandros K',
     'c.giannoula.law@gmail.com': 'Chara Giannoula',
     'chris@shd.global': 'Chris Bourtzoulas',
     'dinos@shd.global': 'Dinos Stavropoulos',
@@ -36,6 +36,9 @@
   window.SHG_AUTH_USER_EMAIL = session?.user?.email?.toLowerCase() || '';
   window.SHG_AUTH_USER_NAME = USER_NAMES[window.SHG_AUTH_USER_EMAIL] || '';
   window.SHG_AUTH_REQUIRED = AUTH_REQUIRED;
+  window.SHG_SUPABASE_URL = SUPABASE_URL;
+  window.SHG_SUPABASE_KEY = SUPABASE_KEY;
+  window.shgGetSupabaseSession = readSession;
   window.SHG_USER_EMAILS = Object.fromEntries(
     Object.entries(USER_NAMES).map(([email, name]) => [name, email]),
   );

@@ -130,26 +130,41 @@
       </section>
     </div>
     <script src="bootstrap-data.js"></script>
-    <script src="auth.js?v=221"></script>
-    <script src="jira-tasks.js"></script>
-    <script src="victor-main-filter.js"></script>
-    <script src="jira-comments-01.js"></script>
-    <script src="jira-comments-02.js"></script>
-    <script src="jira-comments-03.js"></script>
-    <script src="jira-comments-04.js"></script>
-    <script src="jira-comments-05.js"></script>
-    <script src="jira-comments-06.js"></script>
-    <script src="jira-comments-07.js"></script>
-    <script src="jira-comments-08.js"></script>
-    <script src="jira-comments-09.js"></script>
-    <script src="jira-comments-10.js"></script>
-    <script src="jira-comments-11.js"></script>
-    <script src="jira-comments-12.js"></script>
-    <script src="jira-comments-13.js"></script>
-    <script src="jira-comments-14.js"></script>
-    <script src="jira-comments-15.js"></script>
-    <script src="jira-comments-16.js"></script>
-    <script src="app.js?v=221"></script>
+    <script src="auth.js?v=222"></script>
+    <script src="remote-sync.js?v=222"></script>
+    <script>
+      (async () => {
+        try {
+          await window.shgPrepareRemoteData?.();
+        } catch (error) {
+          console.error('Could not load shared SHG data', error);
+          window.SHG_REMOTE_LOAD_ERROR = error;
+        }
+        const scripts = [
+          'jira-tasks.js',
+          'victor-main-filter.js',
+          ...Array.from({ length: 16 }, (_, index) => `jira-comments-${String(index + 1).padStart(2, '0')}.js`),
+          'app.js?v=222',
+        ];
+        for (const source of scripts) {
+          await new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            script.src = source;
+            script.onload = resolve;
+            script.onerror = reject;
+            document.body.appendChild(script);
+          });
+        }
+        if (window.SHG_REMOTE_LOAD_ERROR && typeof window.toast === 'function') {
+          window.toast('The shared database is temporarily unavailable. Changes will remain on this device until the connection returns.');
+        }
+        window.addEventListener('shg:remote-error', event => {
+          if (typeof window.toast === 'function') {
+            window.toast(event.detail?.message || 'The shared database could not save the latest change.');
+          }
+        });
+      })();
+    </script>
     <script>
       (() => {
         const userButton = document.getElementById('sidebarUserButton');
