@@ -36,6 +36,28 @@
   window.SHG_AUTH_USER_EMAIL = session?.user?.email?.toLowerCase() || '';
   window.SHG_AUTH_USER_NAME = USER_NAMES[window.SHG_AUTH_USER_EMAIL] || '';
   window.SHG_AUTH_REQUIRED = AUTH_REQUIRED;
+  window.SHG_USER_EMAILS = Object.fromEntries(
+    Object.entries(USER_NAMES).map(([email, name]) => [name, email]),
+  );
+
+  window.shgInvokeFunction = async (functionName, payload) => {
+    const accessToken = readSession()?.access_token;
+    if (!accessToken) throw new Error('Sign in is required to send notifications.');
+    const response = await fetch(`${SUPABASE_URL}/functions/v1/${functionName}`, {
+      method: 'POST',
+      headers: {
+        apikey: SUPABASE_KEY,
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.error || data.message || 'The notification could not be sent.');
+    }
+    return data;
+  };
 
   async function authRequest(path, body) {
     const response = await fetch(`${SUPABASE_URL}/auth/v1/${path}`, {

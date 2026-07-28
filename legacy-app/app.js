@@ -566,6 +566,7 @@ function submitTaskDetails(id){
   if(!cleanTitle){toast('The task title is required');return}
   if(['blocked','cancelled'].includes(draft.status)&&!String(draft.statusReason||'').trim()){toast(`A reason is required for ${STATUSES.find(status=>status.id===draft.status).label}`);return}
   const oldId=task.id,oldProject=task.project,previousStatus=task.status,changedAt=new Date().toISOString(),changes=[];
+  const pendingMentionComments=(draft.comments||[]).filter(comment=>comment.pending&&String(comment.text||'').trim());
   for(const field of ['title','description','assignee','supervisor','approver','priority','dueDate'])if(String(task[field]??'')!==String(draft[field]??''))changes.push(`${field} changed`);
   if(JSON.stringify(task.labels||[])!==JSON.stringify(draft.labels||[]))changes.push('labels changed');
   if(JSON.stringify(task.comments||[])!==JSON.stringify(draft.comments||[]))changes.push('comments changed');
@@ -585,6 +586,7 @@ function submitTaskDetails(id){
   const row=(window.VICTOR_MAIN_FILTER||[]).find(item=>item.id===oldId);
   if(row){row.id=task.id;row.summary=task.title;row.projectKey=task.project;row.space=PROJECTS[task.project]?.name||task.project;row.labels=[...task.labels];row.assignee=task.assignee;row.supervisor=task.supervisor;row.approver=task.approver;row.priority=task.priority;row.dueDate=task.dueDate;row.status=task.jiraStatus;row.updated=changedAt}
   save();taskDetailsDirtyId=null;taskDetailsDraft=null;closeModal(true);render();toast(`${task.id} changes submitted`);
+  for(const comment of pendingMentionComments)sendMentionEmails(task,comment);
 }
 function taskSubmitButton(task){return `<div class="task-footer-left"><button class="action-btn" data-task-id="${task.id}" onclick="openSubtaskModal(this.dataset.taskId)">+ Create subtask</button>${isMainAdmin()?`<button class="action-btn danger" data-task-id="${task.id}" onclick="deleteTaskFromContext(this.dataset.taskId)">Delete task</button>`:''}</div><div class="task-footer-right"><button class="action-btn" type="button" onclick="closeModal(true)">Cancel</button><button class="primary-btn task-submit-btn" ${taskDetailsDirtyId===task.id?'':'disabled'} onclick="submitTaskDetails('${task.id}')">Submit</button></div>`}
 function scheduleTaskDetailsOpen(id,event){event?.stopPropagation();clearTimeout(taskOpenTimer);taskOpenTimer=setTimeout(()=>openTask(id),230)}
@@ -621,6 +623,36 @@ function closeCommentMention(taskId){const menu=document.getElementById(`comment
 function previewCommentImages(input,id){const preview=document.getElementById(`commentPreview-${id}`),files=[...input.files].slice(0,4);preview.innerHTML='';for(const file of files){if(!file.type.startsWith('image/'))continue;const reader=new FileReader();reader.onload=()=>preview.insertAdjacentHTML('beforeend',`<img src="${reader.result}" alt="Selected image">`);reader.readAsDataURL(file)}if(input.files.length>4)toast('You can attach up to 4 images')}
 function compressCommentImage(file){return new Promise((resolve,reject)=>{if(!file.type.startsWith('image/')){reject(new Error('Only image files are allowed'));return}if(file.size>10*1024*1024){reject(new Error('Each image must be smaller than 10 MB'));return}const reader=new FileReader();reader.onerror=()=>reject(new Error('The image could not be read'));reader.onload=()=>{const image=new Image();image.onerror=()=>reject(new Error('The image could not be processed'));image.onload=()=>{const scale=Math.min(1,1600/Math.max(image.width,image.height)),canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(image.width*scale));canvas.height=Math.max(1,Math.round(image.height*scale));canvas.getContext('2d').drawImage(image,0,0,canvas.width,canvas.height);resolve(canvas.toDataURL('image/jpeg',.78))};image.src=reader.result};reader.readAsDataURL(file)})}
 async function addComment(id,event){event.preventDefault();const form=event.currentTarget,textValue=form.elements.comment.value.trim(),files=[...form.elements.photos.files].slice(0,4);if(!textValue&&!files.length){toast('Write a comment or attach a photo');return}const button=form.querySelector('button[type="submit"]');button.disabled=true;button.textContent='Adding…';try{const images=await Promise.all(files.map(compressCommentImage));if(taskDetailsDraft?.id!==id)throw new Error('The task editor is no longer open');const comment={id:`comment-${Date.now()}`,author:CURRENT_USER,role:roleName(),text:textValue,images,createdAt:new Date().toISOString(),pending:true};taskDetailsDraft.comments=taskDetailsDraft.comments||[];taskDetailsDraft.comments.unshift(comment);markTaskDetailsDirty(id);openTask(id,true);toast('Comment added. Press Submit to save it.')}catch(error){button.disabled=false;button.textContent='Add comment';toast(error.message||'The comment could not be added')}}
+function mentionedPeopleInComment(text){
+  const content=String(text||'');
+  return PEOPLE
+    .filter(person=>person.name!==CURRENT_USER)
+    .filter(person=>{
+      const escaped=person.name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+      return new RegExp(`(^|\\s)@${escaped}(?=\\s|[.,!?;:]|$)`,'i').test(content);
+    })
+    .map(person=>person.name);
+}
+function sendMentionEmails(task,comment){
+  const mentionedNames=[...new Set(mentionedPeopleInComment(comment.text))];
+  if(!mentionedNames.length||typeof window.shgInvokeFunction!=='function')return;
+  window.shgInvokeFunction('send-mention-email',{
+    taskKey:task.id,
+    taskTitle:task.title,
+    comment:String(comment.text||''),
+    commentId:String(comment.id||''),
+    authorName:CURRENT_USER,
+    mentionedNames,
+  }).then(result=>{
+    if(result.sent>0)toast(`${result.sent} mention email${result.sent===1?'':'s'} sent`);
+    const waiting=Math.max(0,(result.queued||0)-(result.sent||0));
+    if(waiting>0)toast(`${waiting} mention email${waiting===1?' is':'s are'} safely queued`);
+    if(result.failed>0)toast(`${result.failed} mention notification${result.failed===1?'':'s'} could not be delivered after all retries`);
+  }).catch(error=>{
+    console.error('Mention notification failed',error);
+    toast('Comment saved, but the mention email could not be sent');
+  });
+}
 function deleteComment(taskId,commentId){
   const task=state.tasks.find(item=>item.id===taskId);
   if(state.role!=='admin'&&!isTaskApprover(task)){toast('Only this task’s Approver or an Administrator can delete comments');return}
@@ -698,4 +730,6 @@ document.addEventListener('pointerdown',event=>{if(!event.target.closest('.task-
 document.addEventListener('click',event=>{document.querySelectorAll('details[open]').forEach(dropdown=>{if(!dropdown.contains(event.target))dropdown.removeAttribute('open')});if(state.openColumnMenu||state.openColumnChooser||state.cellEditor){state.openColumnMenu=null;state.openColumnChooser=false;state.columnFilterDraft=null;state.cellEditor=null;if(state.view==='list')renderList()}});
 document.addEventListener('click',()=>requestAnimationFrame(adjustDropdownDirections),true);window.addEventListener('resize',adjustDropdownDirections);
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal()});window.addEventListener('pagehide',saveLastWorkspaceState);window.addEventListener('beforeunload',saveLastWorkspaceState);{const savedSidebar=localStorage.getItem('shg-sidebar-collapsed'),mobileSidebar=window.matchMedia('(max-width:850px)').matches;setSidebarState(savedSidebar===null?mobileSidebar:savedSidebar==='true')}document.getElementById('searchInput').value=state.query;document.getElementById('projectCrumb').textContent=state.project==='all'?'ALL SPACES':PROJECTS[state.project]?.name.toUpperCase()||'ALL SPACES';renderAssigneeFilter();render();restoreLastWorkspacePosition();
+const linkedTaskId=new URLSearchParams(location.search).get('task');
+if(linkedTaskId)setTimeout(()=>{const linkedTask=state.tasks.find(task=>task.id===linkedTaskId);if(linkedTask)openTask(linkedTask.id)},0);
 if('serviceWorker' in navigator && location.protocol.startsWith('http')) addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js').catch(()=>{}));
