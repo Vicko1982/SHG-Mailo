@@ -104,6 +104,18 @@ function saveLastWorkspaceState(){const list=document.querySelector('#listView .
 function restoreLastWorkspacePosition(){requestAnimationFrame(()=>{window.scrollTo(0,Number(lastWorkspacePosition.pageTop)||0);const activity=document.querySelector('.activity-log-scroll'),users=document.querySelector('#usersView .managed-table-scroll');if(activity)activity.scrollTop=Number(lastWorkspacePosition.activityTop)||0;if(users)users.scrollTop=Number(lastWorkspacePosition.usersTop)||0})}
 loadLastWorkspaceState();
 var activityAuditHeads=new Map(state.tasks.map(task=>[task.id,task.audit?.[0]||'']));
+function migrateDeletedTaskTombstonesToRemote(){
+  if(!isMainAdmin()||!state.deletedTaskIds.size)return;
+  const ids=new Set(state.deletedTaskIds),before=state.tasks.length;
+  state.tasks=state.tasks.filter(task=>!ids.has(task.id));
+  state.manualTaskOrder=state.manualTaskOrder.filter(id=>!ids.has(id));
+  for(const id of ids){state.selectedTasks.delete(id);state.expandedParents.delete(id)}
+  state.deletedTaskIds.clear();
+  safeLocalSet('shg-deleted-task-ids','[]');
+  safeLocalSet('shg-manual-task-order',JSON.stringify(state.manualTaskOrder));
+  if(state.tasks.length!==before)save();
+}
+migrateDeletedTaskTombstonesToRemote();
 function migrateOpenTaskSupervisors(){const migrationKey='shg-migration-open-supervisor-alexandros-v1';if(localStorage.getItem(migrationKey))return;let changed=false;for(const task of state.tasks){if(task.status!=='done'&&task.supervisor!==DEFAULT_SUPERVISOR){task.supervisor=DEFAULT_SUPERVISOR;changed=true}const row=(window.VICTOR_MAIN_FILTER||[]).find(item=>item.id===task.id);if(row&&task.status!=='done')row.supervisor=DEFAULT_SUPERVISOR}if(changed)save();safeLocalSet(migrationKey,'complete')}
 migrateOpenTaskSupervisors();
 function migrateTaskApprovers(){const migrationKey='shg-migration-task-approver-v1';let changed=false;for(const task of state.tasks){if(!task.approver){task.approver=DEFAULT_APPROVER;changed=true}const row=(window.VICTOR_MAIN_FILTER||[]).find(item=>item.id===task.id);if(row&&!row.approver)row.approver=task.approver}if(changed)save();safeLocalSet(migrationKey,'complete')}
@@ -497,8 +509,14 @@ function deleteTaskFromContext(id){
   const task=state.tasks.find(item=>item.id===id);if(!task)return;
   const ids=new Set([id]);let changed=true;while(changed){changed=false;for(const child of state.tasks)if(child.parent&&ids.has(child.parent)&&!ids.has(child.id)){ids.add(child.id);changed=true}}
   const subtaskCount=ids.size-1,message=subtaskCount?`Delete ${id} and its ${subtaskCount} subtask${subtaskCount===1?'':'s'}?`:`Delete task ${id}?`;
-  closeTaskContextMenu();if(!confirm(`${message}\n\nThis action can be undone from the notification.`))return;closeModal();
-  const key='shg-deleted-task-ids',previous=localStorage.getItem(key);logActivity(subtaskCount?`Deleted task with ${subtaskCount} subtask${subtaskCount===1?'':'s'}`:'Deleted task',task);for(const taskId of ids){state.deletedTaskIds.add(taskId);state.selectedTasks.delete(taskId);state.expandedParents.delete(taskId)}safeLocalSet(key,JSON.stringify([...state.deletedTaskIds]));registerUndo(key,previous,()=>location.reload());render();toast(subtaskCount?`${id} and ${subtaskCount} subtask${subtaskCount===1?'':'s'} deleted`:`${id} deleted`);
+  closeTaskContextMenu();if(!confirm(`${message}\n\nThis will delete it for every user.`))return;closeModal();
+  logActivity(subtaskCount?`Deleted task with ${subtaskCount} subtask${subtaskCount===1?'':'s'}`:'Deleted task',task);
+  state.tasks=state.tasks.filter(item=>!ids.has(item.id));
+  state.manualTaskOrder=state.manualTaskOrder.filter(taskId=>!ids.has(taskId));
+  for(const taskId of ids){state.deletedTaskIds.delete(taskId);state.selectedTasks.delete(taskId);state.expandedParents.delete(taskId)}
+  safeLocalSet('shg-deleted-task-ids',JSON.stringify([...state.deletedTaskIds]));
+  safeLocalSet('shg-manual-task-order',JSON.stringify(state.manualTaskOrder));
+  save();render();toast(subtaskCount?`${id} and ${subtaskCount} subtask${subtaskCount===1?'':'s'} deleted for all users`:`${id} deleted for all users`);
 }
 function hierarchicalListRows(rows){
   if(state.sortSubtasksIndividually){state.visibleChildParents=new Set();return sortListRows(rows)}

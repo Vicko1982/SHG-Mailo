@@ -131,7 +131,7 @@
     </div>
     <script src="bootstrap-data.js"></script>
     <script src="auth.js?v=222"></script>
-    <script src="remote-sync.js?v=226"></script>
+    <script src="remote-sync.js?v=227"></script>
     <script>
       (async () => {
         try {
@@ -144,7 +144,7 @@
           'jira-tasks.js',
           'victor-main-filter.js',
           ...Array.from({ length: 16 }, (_, index) => `jira-comments-${String(index + 1).padStart(2, '0')}.js`),
-          'app.js?v=226',
+          'app.js?v=227',
         ];
         for (const source of scripts) {
           await new Promise((resolve, reject) => {

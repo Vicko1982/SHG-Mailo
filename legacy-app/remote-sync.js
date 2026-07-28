@@ -210,9 +210,9 @@
 
   async function loadRemoteData() {
     if (!enabled()) return { remote: false };
-    let pendingLocalTasks = [];
+    let rawPendingLocalTasks = [];
     try {
-      pendingLocalTasks = (JSON.parse(localStorage.getItem(TASK_KEY)) || [])
+      rawPendingLocalTasks = (JSON.parse(localStorage.getItem(TASK_KEY)) || [])
         .filter(task => task && !task._supabaseId);
     } catch {}
 
@@ -264,6 +264,19 @@
 
     const parentKeyById = new Map(tasks.map(row => [row.id, row.task_key]));
     const localTasks = tasks.map(row => taskFromRow(row, parentKeyById, commentsByTask));
+    const currentProfileName = profileName(session()?.user?.id);
+    const remoteTaskKeys = new Set(localTasks.map(task => task.id));
+    const pendingByKey = new Map();
+    for (const task of rawPendingLocalTasks) {
+      if (!task.id || remoteTaskKeys.has(task.id)) continue;
+      if (normalizedName(task.creator) !== normalizedName(currentProfileName)) continue;
+      if (!cache.spaceIdsByKey.has(task.project)) continue;
+      const previous = pendingByKey.get(task.id);
+      const previousUpdated = new Date(previous?.updated || previous?.createdAt || 0).getTime();
+      const taskUpdated = new Date(task.updated || task.createdAt || 0).getTime();
+      if (!previous || taskUpdated >= previousUpdated) pendingByKey.set(task.id, task);
+    }
+    const pendingLocalTasks = [...pendingByKey.values()];
     for (const task of pendingLocalTasks) {
       localTasks.unshift(task);
     }
