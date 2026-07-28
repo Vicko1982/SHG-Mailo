@@ -21,7 +21,10 @@
     syncing: false,
     queued: false,
     timer: null,
+    retryTimer: null,
+    retryDelay: 3000,
   };
+  let prepareRetryTimer = null;
 
   function session() {
     return window.shgGetSupabaseSession?.() || null;
@@ -286,6 +289,28 @@
     return { remote: true, tasks: localTasks.length, comments: comments.length, spaces: spaces.length };
   }
 
+  async function prepareRemoteData() {
+    try {
+      const result = await loadRemoteData();
+      if (prepareRetryTimer) {
+        clearTimeout(prepareRetryTimer);
+        prepareRetryTimer = null;
+      }
+      return result;
+    } catch (error) {
+      if (enabled() && !prepareRetryTimer) {
+        prepareRetryTimer = setTimeout(async () => {
+          prepareRetryTimer = null;
+          try {
+            await prepareRemoteData();
+            if (window.SHG_APP_LOADED) location.reload();
+          } catch {}
+        }, 3000);
+      }
+      throw error;
+    }
+  }
+
   function incrementTaskKey(taskKey) {
     const match = String(taskKey || '').match(/^(.*?)-(\d+)$/);
     if (!match) return `${taskKey}-2`;
@@ -468,10 +493,23 @@
       }
 
       localStorage.setItem(TASK_KEY, JSON.stringify(tasks));
+      if (cache.retryTimer) {
+        clearTimeout(cache.retryTimer);
+        cache.retryTimer = null;
+      }
+      cache.retryDelay = 3000;
       window.dispatchEvent(new CustomEvent('shg:remote-saved', { detail: { changed: changed.length } }));
     } catch (error) {
       console.error('SHG remote sync failed', error);
       window.dispatchEvent(new CustomEvent('shg:remote-error', { detail: { message: error.message } }));
+      if (!cache.retryTimer) {
+        const retryIn = cache.retryDelay;
+        cache.retryDelay = Math.min(cache.retryDelay * 2, 30000);
+        cache.retryTimer = setTimeout(() => {
+          cache.retryTimer = null;
+          syncTasks(tasks, activity);
+        }, retryIn);
+      }
     } finally {
       cache.syncing = false;
       if (cache.queued) setTimeout(() => syncTasks(tasks, activity), 50);
@@ -479,12 +517,15 @@
   }
 
   function queueSync(tasks, activity) {
-    if (!cache.ready) return;
+    if (!cache.ready) {
+      cache.queued = true;
+      return;
+    }
     clearTimeout(cache.timer);
     cache.timer = setTimeout(() => syncTasks(tasks, activity), 250);
   }
 
-  window.shgPrepareRemoteData = loadRemoteData;
+  window.shgPrepareRemoteData = prepareRemoteData;
   window.shgQueueRemoteSync = queueSync;
   window.shgFlushRemoteSync = syncTasks;
 })();

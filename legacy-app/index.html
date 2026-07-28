@@ -131,7 +131,7 @@
     </div>
     <script src="bootstrap-data.js"></script>
     <script src="auth.js?v=222"></script>
-    <script src="remote-sync.js?v=224"></script>
+    <script src="remote-sync.js?v=225"></script>
     <script>
       (async () => {
         try {
@@ -155,8 +155,9 @@
             document.body.appendChild(script);
           });
         }
+        window.SHG_APP_LOADED = true;
         if (window.SHG_REMOTE_LOAD_ERROR && typeof window.toast === 'function') {
-          window.toast('The shared database is temporarily unavailable. Changes will remain on this device until the connection returns.');
+          window.toast(`The shared database is temporarily unavailable. Retrying automatically. ${window.SHG_REMOTE_LOAD_ERROR.message || ''}`.trim());
         }
         window.addEventListener('shg:remote-error', event => {
           if (typeof window.toast === 'function') {
