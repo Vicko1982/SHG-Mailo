@@ -5,11 +5,17 @@ const root = resolve(import.meta.dirname, "..");
 const sourceDir = join(root, "legacy-app");
 const publicDir = join(root, "dist", "public");
 const serverDir = join(root, "dist", "server");
+const hostingDir = join(root, "dist", ".openai");
 const initialStateFile = join(sourceDir, "initial-state.json");
 
 await rm(join(root, "dist"), { recursive: true, force: true });
 await mkdir(publicDir, { recursive: true });
 await mkdir(serverDir, { recursive: true });
+await mkdir(hostingDir, { recursive: true });
+await copyFile(
+  join(root, ".openai", "hosting.json"),
+  join(hostingDir, "hosting.json"),
+);
 
 async function copyDirectory(source, destination) {
   await mkdir(destination, { recursive: true });
