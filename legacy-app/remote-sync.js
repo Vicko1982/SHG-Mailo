@@ -34,6 +34,31 @@
     return Boolean(session()?.access_token && window.SHG_SUPABASE_URL && window.SHG_SUPABASE_KEY);
   }
 
+  function safeLocalSet(key, value) {
+    try {
+      localStorage.setItem(key, value);
+      return true;
+    } catch (error) {
+      window.SHG_LOCAL_CACHE_FULL = true;
+      console.warn(`Local cache skipped for ${key}`, error);
+      return false;
+    }
+  }
+
+  function taskForLocalCache(task) {
+    const clone = safeClone(task) || {};
+    if (!clone._supabaseId) return clone;
+    for (const comment of clone.comments || []) {
+      if (!Array.isArray(comment.images)) continue;
+      comment.images = comment.images.filter(source => !String(source || '').startsWith('data:'));
+    }
+    return clone;
+  }
+
+  function writeTaskCache(tasks) {
+    return safeLocalSet(TASK_KEY, JSON.stringify((tasks || []).map(taskForLocalCache)));
+  }
+
   function headers(extra = {}) {
     return {
       apikey: window.SHG_SUPABASE_KEY,
@@ -267,15 +292,22 @@
       .map(row => profileName(row.user_id))
       .filter(Boolean);
     const localActivity = activity.map(activityFromRow);
+    const approverNames = [...new Set(localTasks.map(task => task.approver).filter(Boolean))];
 
-    localStorage.setItem(TASK_KEY, JSON.stringify(localTasks));
-    localStorage.setItem(ACTIVITY_KEY, JSON.stringify(localActivity));
-    localStorage.setItem(SHARED_SPACES_KEY, JSON.stringify(sharedDefinitions));
-    localStorage.setItem(SPACE_ACCESS_KEY, JSON.stringify(access));
-    localStorage.setItem(ADMIN_KEY, JSON.stringify(adminNames));
-    localStorage.setItem(APPROVER_KEY, JSON.stringify([
-      ...new Set(localTasks.map(task => task.approver).filter(Boolean)),
-    ]));
+    window.SHG_REMOTE_BOOTSTRAP = {
+      tasks: localTasks,
+      activity: localActivity,
+      sharedSpaces: sharedDefinitions,
+      spaceAccess: access,
+      adminNames,
+      approverNames,
+    };
+    writeTaskCache(localTasks);
+    safeLocalSet(ACTIVITY_KEY, JSON.stringify(localActivity));
+    safeLocalSet(SHARED_SPACES_KEY, JSON.stringify(sharedDefinitions));
+    safeLocalSet(SPACE_ACCESS_KEY, JSON.stringify(access));
+    safeLocalSet(ADMIN_KEY, JSON.stringify(adminNames));
+    safeLocalSet(APPROVER_KEY, JSON.stringify(approverNames));
 
     cache.activityIds = new Set(localActivity.map(entry => entry.id));
     cache.ready = true;
@@ -492,7 +524,7 @@
         cache.activityIds.add(entry.id);
       }
 
-      localStorage.setItem(TASK_KEY, JSON.stringify(tasks));
+      writeTaskCache(tasks);
       if (cache.retryTimer) {
         clearTimeout(cache.retryTimer);
         cache.retryTimer = null;
@@ -528,4 +560,6 @@
   window.shgPrepareRemoteData = prepareRemoteData;
   window.shgQueueRemoteSync = queueSync;
   window.shgFlushRemoteSync = syncTasks;
+  window.shgSafeLocalSet = safeLocalSet;
+  window.shgWriteTaskCache = writeTaskCache;
 })();
