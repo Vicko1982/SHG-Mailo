@@ -68,9 +68,15 @@
     const size = 1000;
     for (let start = 0; ; start += size) {
       const separator = extra ? `&${extra}` : '';
-      const page = await request(`/rest/v1/${table}?select=${encodeURIComponent(select)}${separator}`, {
-        headers: { Range: `${start}-${start + size - 1}` },
-      });
+      let page;
+      try {
+        page = await request(`/rest/v1/${table}?select=${encodeURIComponent(select)}${separator}`, {
+          headers: { Range: `${start}-${start + size - 1}` },
+        });
+      } catch (error) {
+        error.message = `${table}: ${error.message}`;
+        throw error;
+      }
       rows.push(...page);
       if (page.length < size) return rows;
     }
@@ -182,15 +188,23 @@
         .filter(task => task && !task._supabaseId);
     } catch {}
 
-    const [profiles, roles, spaces, members, tasks, comments, activity] = await Promise.all([
+    const core = await Promise.all([
       fetchAll('profiles', 'id,full_name,email,initials,is_active,last_login'),
       fetchAll('user_roles', 'user_id,role'),
       fetchAll('spaces', 'id,key,name,color,type,owner_id'),
       fetchAll('space_members', 'space_id,user_id'),
       fetchAll('tasks', 'id,task_key,title,space_id,status,jira_status,priority,assignee_id,supervisor_id,approver_id,description,issue_type,parent_id,created_at,updated_at,due_date,labels,cancellation_reason,created_by_id,audit,is_mini_task,manual_order,legacy_data'),
+    ]);
+    const optional = await Promise.allSettled([
       fetchAll('task_comments', 'id,task_id,author_id,content,created_at,updated_at,legacy_data'),
       fetchAll('activity_log', 'id,user_id,action,task_id,task_title,metadata,created_at,legacy_data,task:tasks(task_key)'),
     ]);
+    const [profiles, roles, spaces, members, tasks] = core;
+    const comments = optional[0].status === 'fulfilled' ? optional[0].value : [];
+    const activity = optional[1].status === 'fulfilled' ? optional[1].value : [];
+    for (const result of optional) {
+      if (result.status === 'rejected') console.warn('Optional shared data unavailable', result.reason);
+    }
 
     cache.profiles.clear();
     cache.profileIdsByName.clear();
