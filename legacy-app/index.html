@@ -15,7 +15,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="styles.css?v=230" />
+    <link rel="stylesheet" href="styles.css?v=231" />
   </head>
   <body>
     <div class="app-shell">
@@ -130,7 +130,7 @@
     </div>
     <script src="bootstrap-data.js"></script>
     <script src="auth.js?v=222"></script>
-    <script src="remote-sync.js?v=230"></script>
+    <script src="remote-sync.js?v=231"></script>
     <script>
       (async () => {
         try {
@@ -143,7 +143,7 @@
           'jira-tasks.js',
           'victor-main-filter.js',
           ...Array.from({ length: 16 }, (_, index) => `jira-comments-${String(index + 1).padStart(2, '0')}.js`),
-          'app.js?v=230',
+          'app.js?v=231',
         ];
         for (const source of scripts) {
           await new Promise((resolve, reject) => {
