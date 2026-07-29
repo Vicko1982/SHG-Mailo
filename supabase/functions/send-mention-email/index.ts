@@ -22,6 +22,7 @@ type Payload = {
   comment?: string;
   authorName?: string;
   mentionedNames?: string[];
+  recipientRoles?: Record<string, string[]>;
 };
 
 type Profile = {
@@ -42,6 +43,7 @@ type QueueJob = {
   task_url: string;
   attempt_count: number;
   notification_type?: string;
+  recipient_context?: { roles?: string[] };
 };
 
 function normalize(value: string): string {
@@ -78,10 +80,15 @@ function resolveRequestedProfiles(profiles: Profile[], names: string[]): Profile
 }
 
 function mailContent(job: QueueJob) {
+  const roles = [...new Set(job.recipient_context?.roles ?? [])];
+  const roleText = roles.length > 1
+    ? `${roles.slice(0, -1).join(", ")} and ${roles.at(-1)}`
+    : roles[0] ?? "participant";
   if (job.notification_type === "task_created") {
-    const subject = `New task assigned: ${job.task_key}`;
+    const subject = `New task — you are ${roleText}: ${job.task_key}`;
     const text = [
       `${job.author_name} created a new task in SHG Task Manager.`,
+      `You are the ${roleText} for this task.`,
       "",
       `Task: ${job.task_key} — ${job.task_title}`,
       "",
@@ -90,7 +97,7 @@ function mailContent(job: QueueJob) {
     const html = `
       <div style="font-family:Arial,sans-serif;color:#172033;line-height:1.55;max-width:640px">
         <h2 style="margin:0 0 18px">A new task was created</h2>
-        <p><strong>${escapeHtml(job.author_name)}</strong> created a task in which you are the Assignee, Supervisor, or Approver.</p>
+        <p><strong>${escapeHtml(job.author_name)}</strong> created this task and you are the <strong>${escapeHtml(roleText)}</strong>.</p>
         <div style="padding:16px;border:1px solid #dfe5ee;border-radius:10px;background:#f8fafc">
           <div style="font-size:12px;color:#667085;margin-bottom:5px">${escapeHtml(job.task_key)}</div>
           <div style="font-size:18px;font-weight:700">${escapeHtml(job.task_title)}</div>
@@ -102,9 +109,15 @@ function mailContent(job: QueueJob) {
     return { subject, text, html };
   }
   if (job.notification_type === "comment") {
-    const subject = `New comment in ${job.task_key}`;
+    const wasMentioned = roles.includes("Mention");
+    const reason = wasMentioned
+      ? `${job.author_name} mentioned you in this comment.`
+      : `You received this email because you are the ${roleText} for this task.`;
+    const subject = wasMentioned
+      ? `${job.author_name} mentioned you in ${job.task_key}`
+      : `New comment in ${job.task_key}`;
     const text = [
-      `${job.author_name} added a comment to a task you follow.`,
+      reason,
       "",
       `Task: ${job.task_key} — ${job.task_title}`,
       `Comment: ${job.comment_text}`,
@@ -114,7 +127,7 @@ function mailContent(job: QueueJob) {
     const html = `
       <div style="font-family:Arial,sans-serif;color:#172033;line-height:1.55;max-width:640px">
         <h2 style="margin:0 0 18px">A new task comment was added</h2>
-        <p><strong>${escapeHtml(job.author_name)}</strong> added a comment to a task where you are the Assignee, Supervisor, or were mentioned.</p>
+        <p>${escapeHtml(reason)}</p>
         <div style="padding:16px;border:1px solid #dfe5ee;border-radius:10px;background:#f8fafc">
           <div style="font-size:12px;color:#667085;margin-bottom:5px">${escapeHtml(job.task_key)}</div>
           <div style="font-size:18px;font-weight:700">${escapeHtml(job.task_title)}</div>
@@ -328,6 +341,12 @@ Deno.serve(async (request) => {
       comment_id: commentId,
       comment_text: comment,
       task_url: taskUrl,
+      recipient_context: {
+        roles: [...new Set(
+          Object.entries(payload.recipientRoles ?? {})
+            .find(([name]) => normalize(name) === normalize(recipient.full_name ?? ""))?.[1] ?? [],
+        )],
+      },
     }));
     if (queueRows.length) {
       const { error: queueError } = await admin.from("mention_email_queue")

@@ -231,10 +231,12 @@
     const optional = await Promise.allSettled([
       fetchAll('task_comments', 'id,task_id,author_id,content,created_at,updated_at,legacy_data'),
       fetchAll('activity_log', 'id,user_id,action,task_id,task_title,metadata,created_at,legacy_data,task:tasks(task_key)'),
+      fetchAll('app_settings', 'current_approver_id', 'id=eq.true'),
     ]);
     const [profiles, roles, spaces, members, tasks] = core;
     const comments = optional[0].status === 'fulfilled' ? optional[0].value : [];
     const activity = optional[1].status === 'fulfilled' ? optional[1].value : [];
+    const settings = optional[2].status === 'fulfilled' ? optional[2].value : [];
     for (const result of optional) {
       if (result.status === 'rejected') console.warn('Optional shared data unavailable', result.reason);
     }
@@ -310,7 +312,10 @@
       .map(row => profileName(row.user_id))
       .filter(Boolean);
     const localActivity = activity.map(activityFromRow);
-    const approverNames = [...new Set(localTasks.map(task => task.approver).filter(Boolean))];
+    const currentApproverName = profileName(settings[0]?.current_approver_id) ||
+      [...new Set(localTasks.map(task => task.approver).filter(Boolean))][0] ||
+      '';
+    const approverNames = currentApproverName ? [currentApproverName] : [];
 
     window.SHG_REMOTE_BOOTSTRAP = {
       tasks: localTasks,
@@ -319,6 +324,7 @@
       spaceAccess: access,
       adminNames,
       approverNames,
+      currentApproverName,
     };
     writeTaskCache(localTasks);
     safeLocalSet(ACTIVITY_KEY, JSON.stringify(localActivity));
@@ -580,9 +586,32 @@
     cache.timer = setTimeout(() => syncTasks(tasks, activity), 250);
   }
 
+  async function saveUserSettings({ adminNames = [], approverName, spaceAccess = {} } = {}) {
+    if (!enabled() || !cache.ready) throw new Error('The shared database is not ready');
+    const approverId = profileId(approverName);
+    if (!approverId) throw new Error('The selected Approver was not found');
+    const adminIds = adminNames.map(profileId).filter(Boolean);
+    const accessById = {};
+    for (const [spaceKey, names] of Object.entries(spaceAccess || {})) {
+      if (!cache.spaceIdsByKey.has(spaceKey)) continue;
+      accessById[spaceKey] = (names || []).map(profileId).filter(Boolean);
+    }
+    await request('/rest/v1/rpc/save_user_settings', {
+      method: 'POST',
+      body: JSON.stringify({
+        admin_user_ids: adminIds,
+        selected_approver_id: approverId,
+        shared_space_access: accessById,
+      }),
+    });
+    await loadRemoteData();
+    return true;
+  }
+
   window.shgPrepareRemoteData = prepareRemoteData;
   window.shgQueueRemoteSync = queueSync;
   window.shgFlushRemoteSync = syncTasks;
   window.shgSafeLocalSet = safeLocalSet;
   window.shgWriteTaskCache = writeTaskCache;
+  window.shgSaveUserSettings = saveUserSettings;
 })();
