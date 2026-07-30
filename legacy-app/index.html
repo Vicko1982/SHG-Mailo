@@ -7,11 +7,19 @@
     <meta name="theme-color" content="#10233f" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="SHG Task Manager" />
+    <meta name="apple-mobile-web-app-title" content="Mailo" />
     <title>SHG Task Manager</title>
-    <link rel="manifest" href="manifest.webmanifest" />
+    <link id="appManifest" rel="manifest" href="manifest.webmanifest" />
     <link rel="icon" href="icons/app-icon.svg" type="image/svg+xml" />
-    <link rel="apple-touch-icon" href="icons/app-icon.svg" />
+    <link rel="apple-touch-icon" href="icons/mailo-logo.jpeg" />
+    <script>
+      (() => {
+        if (new URLSearchParams(location.search).get('voice') !== '1') return;
+        document.title = 'Mailo Voice';
+        document.querySelector('meta[name="apple-mobile-web-app-title"]')?.setAttribute('content', 'Mailo Voice');
+        document.getElementById('appManifest')?.setAttribute('href', 'voice.webmanifest');
+      })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet" />
@@ -149,7 +157,7 @@
           'jira-tasks.js',
           'victor-main-filter.js',
           ...Array.from({ length: 16 }, (_, index) => `jira-comments-${String(index + 1).padStart(2, '0')}.js`),
-          'app.js?v=235',
+          'app.js?v=237',
         ];
         for (const source of scripts) {
           await new Promise((resolve, reject) => {

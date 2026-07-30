@@ -915,7 +915,13 @@ async function openVoiceTaskModal(){
     const response=await fetch('https://api.openai.com/v1/realtime/calls',{method:'POST',body:offer.sdp,headers:{Authorization:`Bearer ${ephemeralKey}`,'Content-Type':'application/sdp'}});
     if(!response.ok)throw new Error((await response.text())||`Realtime connection failed (${response.status})`);
     await peer.setRemoteDescription({type:'answer',sdp:await response.text()})
-  }catch(error){console.error('Voice Task connection',error);setVoiceTaskStatus(error?.message||'Δεν ήταν δυνατή η φωνητική σύνδεση.');document.querySelector('.voice-task-help').textContent='Ελέγξτε ότι επιτρέπεται το μικρόφωνο και δοκιμάστε ξανά.'}
+  }catch(error){
+    console.error('Voice Task connection',error);
+    setVoiceTaskStatus(error?.message||'Δεν ήταν δυνατή η φωνητική σύνδεση.');
+    const help=document.querySelector('.voice-task-help'),actions=document.querySelector('.voice-task-actions');
+    if(help)help.textContent='Ελέγξτε ότι επιτρέπεται το μικρόφωνο και δοκιμάστε ξανά.';
+    if(actions&&!document.getElementById('retryVoiceTaskBtn'))actions.insertAdjacentHTML('afterbegin','<button id="retryVoiceTaskBtn" type="button" class="primary-btn" onclick="openVoiceTaskModal()">Start Voice</button>')
+  }
 }
 function closeVoiceTaskModal(){
   const active=voiceRealtime;voiceRealtime=null;
@@ -978,4 +984,9 @@ document.addEventListener('click',()=>requestAnimationFrame(adjustDropdownDirect
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal()});window.addEventListener('pagehide',saveLastWorkspaceState);window.addEventListener('beforeunload',saveLastWorkspaceState);{const savedSidebar=localStorage.getItem('shg-sidebar-collapsed'),mobileSidebar=window.matchMedia('(max-width:850px)').matches;setSidebarState(savedSidebar===null?mobileSidebar:savedSidebar==='true')}document.getElementById('searchInput').value=state.query;document.getElementById('projectCrumb').textContent=state.project==='all'?'ALL SPACES':PROJECTS[state.project]?.name.toUpperCase()||'ALL SPACES';renderAssigneeFilter();render();restoreLastWorkspacePosition();
 const linkedTaskId=new URLSearchParams(location.search).get('task');
 if(linkedTaskId)setTimeout(()=>{const linkedTask=state.tasks.find(task=>task.id===linkedTaskId);if(linkedTask)openTask(linkedTask.id)},0);
+const voiceLaunchRequested=new URLSearchParams(location.search).get('voice')==='1';
+if(voiceLaunchRequested)setTimeout(()=>{
+  if(isMainAdmin())openVoiceTaskModal();
+  else toast('Mailo Voice is available only to the Main Admin');
+},250);
 if('serviceWorker' in navigator && location.protocol.startsWith('http')) addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js').catch(()=>{}));
