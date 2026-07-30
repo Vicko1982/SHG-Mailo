@@ -148,11 +148,18 @@ function sha256(value: string) {
     );
 }
 
-function validateApiKey(request: Request) {
+async function validateCaller(request: Request, admin: ReturnType<typeof createClient>) {
   const expected = Deno.env.get("MAILO_VOICE_API_KEY");
-  if (!expected) throw new Error("Το Voice Task API δεν έχει ενεργοποιηθεί ακόμα.");
   const supplied = (request.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "");
-  if (!supplied || supplied !== expected) throw new Error("Μη εξουσιοδοτημένη φωνητική εντολή.");
+  if (expected && supplied === expected) return;
+  if (!supplied) throw new Error("Μη εξουσιοδοτημένη φωνητική εντολή.");
+  const { data: authData } = await admin.auth.getUser(supplied);
+  if (!authData.user) throw new Error("Μη εξουσιοδοτημένη φωνητική εντολή.");
+  const { data: roles } = await admin.from("user_roles").select("role")
+    .eq("user_id", authData.user.id);
+  if (!roles?.some((row) => row.role === "main_admin")) {
+    throw new Error("Το Voice Task είναι διαθέσιμο μόνο στον Main Admin.");
+  }
 }
 
 function buildSummary(
@@ -187,12 +194,12 @@ Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    validateApiKey(request);
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const admin = createClient(supabaseUrl, serviceKey, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
+    await validateCaller(request, admin);
     const url = new URL(request.url);
     const path = url.pathname.replace(/^.*\/voice-task-api\/?/, "/");
 
