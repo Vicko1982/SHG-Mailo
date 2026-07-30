@@ -15,55 +15,30 @@ paths:
       responses:
         "200":
           description: Current Task creation context.
-  /drafts:
+  /create:
     post:
-      operationId: prepareMailoTask
-      summary: Validate a requested Task and prepare the spoken confirmation. This does not create a Task.
+      operationId: createMailoTask
+      summary: Create a Task after the user has already heard the summary and explicitly confirmed it.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/DraftRequest"
-      responses:
-        "200":
-          description: Draft prepared and waiting for explicit user confirmation.
-        "422":
-          description: A required field is missing, such as the Assignee for a Mini Task.
-  /drafts/{draftId}/confirm:
-    post:
-      operationId: confirmMailoTask
-      summary: Create a previously prepared Task only after the user explicitly confirms it.
-      parameters:
-        - in: path
-          name: draftId
-          required: true
-          schema:
-            type: string
-            format: uuid
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [confirmationToken]
-              properties:
-                confirmationToken:
-                  type: string
-                  description: The opaque token returned by prepareMailoTask. Never invent or alter it.
+              $ref: "#/components/schemas/CreateRequest"
       responses:
         "200":
           description: Task created successfully.
+        "422":
+          description: A required field is missing, such as the Assignee for a Mini Task.
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
   schemas:
-    DraftRequest:
+    CreateRequest:
       type: object
-      required: [type, title, explicitFields]
+      required: [type, title, confirmed, explicitFields]
       properties:
         type:
           type: string
@@ -72,6 +47,10 @@ components:
         title:
           type: string
           description: A short, clear title. Move extra detail to description.
+        confirmed:
+          type: boolean
+          const: true
+          description: Set to true only after the user explicitly confirms the spoken summary.
         description:
           type: [string, "null"]
           description: Remaining detail from a long voice request.

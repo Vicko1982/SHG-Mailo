@@ -12,6 +12,7 @@ type Priority = "Highest" | "High" | "Medium" | "Low" | "Lowest";
 type DraftRequest = {
   type: TaskType;
   title: string;
+  confirmed?: boolean;
   description?: string | null;
   space?: string | null;
   assignee?: string | null;
@@ -205,8 +206,12 @@ Deno.serve(async (request) => {
       });
     }
 
-    if (request.method === "POST" && path === "/drafts") {
+    if (request.method === "POST" && (path === "/drafts" || path === "/create")) {
       const input = await request.json() as DraftRequest;
+      const createImmediately = path === "/create";
+      if (createImmediately && input.confirmed !== true) {
+        throw new Error("Απαιτείται ρητή επιβεβαίωση πριν από τη δημιουργία.");
+      }
       if (!["task", "mini_task"].includes(input.type)) {
         throw new Error("Πρέπει να διευκρινίσεις αν θέλεις Task ή Mini Task.");
       }
@@ -262,6 +267,23 @@ Deno.serve(async (request) => {
         confirmation_token_hash: tokenHash,
       }).select("id,expires_at").single();
       if (draftError) throw draftError;
+      if (createImmediately) {
+        const { data, error } = await admin.rpc("confirm_voice_task_draft", {
+          selected_draft_id: draft.id,
+          selected_token_hash: tokenHash,
+        });
+        if (error) throw error;
+        const task = data?.[0];
+        if (!task) throw new Error("Το Task δεν δημιουργήθηκε.");
+        return json({
+          created: true,
+          taskId: task.task_id,
+          taskKey: task.task_key,
+          title: task.task_title,
+          url: `https://mailo.shd.global/?task=${encodeURIComponent(task.task_key)}`,
+          message: `${task.task_key} δημιουργήθηκε επιτυχώς.`,
+        });
+      }
       return json({
         ready: true,
         requiresConfirmation: true,
