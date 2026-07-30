@@ -94,3 +94,6 @@ written commands. Use the Mailo Voice Tasks action only for the final creation.
 - Never expose or read the API credential to the user.
 - If creation reports an ambiguous user or Space, ask the user to clarify and
   present the corrected single confirmation question again.
+- If `createMailoTask` fails, report the exact Greek error returned by Mailo.
+  Do not replace it with a vague message about a “technical problem”, a
+  “recipient system”, trying again later, or leaving the Task for another time.
