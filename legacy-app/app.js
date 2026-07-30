@@ -883,6 +883,25 @@ function appendVoiceTranscript(role,text){
   if(box.textContent==='Η συνομιλία θα εμφανιστεί εδώ…')box.innerHTML='';
   const line=document.createElement('div');line.className=`voice-transcript-line ${role}`;line.innerHTML=`<strong>${role==='user'?'Εσείς':'Mailo'}:</strong> ${esc(String(text).trim())}`;box.appendChild(line);box.scrollTop=box.scrollHeight
 }
+function showVoicePlaybackControl(){
+  const actions=document.querySelector('.voice-task-actions');
+  if(!actions||document.getElementById('enableVoiceAudioBtn'))return;
+  actions.insertAdjacentHTML('afterbegin','<button id="enableVoiceAudioBtn" type="button" class="primary-btn" onclick="enableVoicePlayback()">Enable Voice</button>');
+  setVoiceTaskStatus('Το Safari έχει μπλοκάρει προσωρινά τη φωνή. Πατήστε Enable Voice.')
+}
+async function enableVoicePlayback(){
+  const audio=voiceRealtime?.audio;
+  if(!audio)return;
+  try{
+    audio.muted=false;audio.volume=1;
+    await audio.play();
+    document.getElementById('enableVoiceAudioBtn')?.remove();
+    setVoiceTaskStatus('Η φωνή ενεργοποιήθηκε. Περιμένω την απάντησή σας…',true)
+  }catch(error){
+    console.warn('Voice audio playback is still blocked',error);
+    setVoiceTaskStatus('Το Safari εξακολουθεί να εμποδίζει τον ήχο. Ελέγξτε ότι το site δεν είναι σε σίγαση.')
+  }
+}
 async function voiceFunctionRequest(path,payload){
   const session=window.shgGetSupabaseSession?.();if(!session?.access_token)throw new Error('Απαιτείται σύνδεση ως Main Admin.');
   const response=await fetch(`${window.SHG_SUPABASE_URL}/functions/v1/voice-task-api${path}`,{method:'POST',headers:{apikey:window.SHG_SUPABASE_KEY,Authorization:`Bearer ${session.access_token}`,'Content-Type':'application/json'},body:JSON.stringify(payload||{})});
@@ -931,12 +950,26 @@ function handleVoiceRealtimeEvent(event){
 async function openVoiceTaskModal(){
   if(!isMainAdmin()){toast('Voice Task is available only to the Main Admin');return}
   renderVoiceTaskModal();
+  let stream=null,audio=null;
   try{
     if(!navigator.mediaDevices?.getUserMedia||!window.RTCPeerConnection)throw new Error('Ο browser δεν υποστηρίζει ασφαλή Realtime φωνητική σύνδεση.');
-    const token=await window.shgInvokeFunction('voice-realtime-session',{action:'start'}),ephemeralKey=token.value;
+    const streamRequest=navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
+    const tokenRequest=window.shgInvokeFunction('voice-realtime-session',{action:'start'});
+    const results=await Promise.all([streamRequest,tokenRequest]);stream=results[0];
+    const token=results[1],ephemeralKey=token.value;
     if(!ephemeralKey)throw new Error(token.error||'Δεν δημιουργήθηκε προσωρινό κλειδί Realtime.');
-    const peer=new RTCPeerConnection(),audio=document.createElement('audio'),stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
-    audio.autoplay=true;audio.playsInline=true;peer.ontrack=event=>{audio.srcObject=event.streams[0];audio.play().catch(()=>{})};stream.getTracks().forEach(track=>peer.addTrack(track,stream));
+    const peer=new RTCPeerConnection();audio=document.createElement('audio');
+    audio.autoplay=true;audio.playsInline=true;audio.muted=false;audio.volume=1;
+    audio.setAttribute('autoplay','');audio.setAttribute('playsinline','');audio.setAttribute('webkit-playsinline','');
+    audio.style.position='fixed';audio.style.width='1px';audio.style.height='1px';audio.style.opacity='0';audio.style.pointerEvents='none';
+    document.body.appendChild(audio);
+    peer.ontrack=event=>{
+      audio.srcObject=event.streams[0];
+      const startPlayback=()=>audio.play().then(()=>document.getElementById('enableVoiceAudioBtn')?.remove()).catch(error=>{console.warn('Voice audio autoplay was blocked',error);showVoicePlaybackControl()});
+      audio.addEventListener('loadedmetadata',startPlayback,{once:true});
+      startPlayback()
+    };
+    stream.getTracks().forEach(track=>peer.addTrack(track,stream));
     const dataChannel=peer.createDataChannel('oai-events'),sessionId=crypto.randomUUID(),startedAt=Date.now();
     voiceRealtime={peer,audio,stream,dataChannel,sessionId,startedAt,draft:null,created:null,usage:null,error:null,handledCalls:new Set()};
     dataChannel.addEventListener('open',()=>setVoiceTaskStatus('Ακούω την εντολή σας…',true));
@@ -947,6 +980,7 @@ async function openVoiceTaskModal(){
     if(!response.ok)throw new Error((await response.text())||`Realtime connection failed (${response.status})`);
     await peer.setRemoteDescription({type:'answer',sdp:await response.text()})
   }catch(error){
+    stream?.getTracks()?.forEach(track=>track.stop());audio?.remove();
     console.error('Voice Task connection',error);
     setVoiceTaskStatus(error?.message||'Δεν ήταν δυνατή η φωνητική σύνδεση.');
     const help=document.querySelector('.voice-task-help'),actions=document.querySelector('.voice-task-actions');
@@ -956,7 +990,7 @@ async function openVoiceTaskModal(){
 }
 function closeVoiceTaskModal(){
   const active=voiceRealtime;voiceRealtime=null;
-  if(active){try{active.dataChannel?.close()}catch{}try{active.peer?.close()}catch{}active.stream?.getTracks()?.forEach(track=>track.stop());window.shgInvokeFunction?.('voice-realtime-session',{action:'log',sessionId:active.sessionId,durationSeconds:Math.round((Date.now()-active.startedAt)/1000),usage:active.usage||{},error:active.error||null}).catch(()=>{})}
+  if(active){try{active.dataChannel?.close()}catch{}try{active.peer?.close()}catch{}active.stream?.getTracks()?.forEach(track=>track.stop());active.audio?.pause();active.audio?.remove();window.shgInvokeFunction?.('voice-realtime-session',{action:'log',sessionId:active.sessionId,durationSeconds:Math.round((Date.now()-active.startedAt)/1000),usage:active.usage||{},error:active.error||null}).catch(()=>{})}
   document.getElementById('voiceTaskBtn')?.classList.remove('listening');closeModal(true)
 }
 function miniTaskModal(){
