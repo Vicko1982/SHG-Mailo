@@ -5,6 +5,7 @@
   const SPACE_ACCESS_KEY = 'shg-space-access';
   const ADMIN_KEY = 'shg-administrators';
   const APPROVER_KEY = 'shg-approvers';
+  const DELETED_TASKS_KEY = 'shg-deleted-task-ids';
   const REMOTE_TIMEOUT = 20000;
 
   const cache = {
@@ -218,9 +219,13 @@
   async function loadRemoteData() {
     if (!enabled()) return { remote: false };
     let rawPendingLocalTasks = [];
+    let deletedTaskKeys = new Set();
     try {
       rawPendingLocalTasks = (JSON.parse(localStorage.getItem(TASK_KEY)) || [])
         .filter(task => task && !task._supabaseId);
+    } catch {}
+    try {
+      deletedTaskKeys = new Set(JSON.parse(localStorage.getItem(DELETED_TASKS_KEY)) || []);
     } catch {}
 
     const core = await Promise.all([
@@ -272,11 +277,14 @@
     }
 
     const parentKeyById = new Map(tasks.map(row => [row.id, row.task_key]));
-    const localTasks = tasks.map(row => taskFromRow(row, parentKeyById, commentsByTask));
+    const allRemoteTasks = tasks.map(row => taskFromRow(row, parentKeyById, commentsByTask));
+    const tombstonedRemoteTasks = allRemoteTasks.filter(task => deletedTaskKeys.has(task.id));
+    const localTasks = allRemoteTasks.filter(task => !deletedTaskKeys.has(task.id));
     const currentProfileName = profileName(session()?.user?.id);
     const remoteTaskKeys = new Set(localTasks.map(task => task.id));
     const pendingByKey = new Map();
     for (const task of rawPendingLocalTasks) {
+      if (deletedTaskKeys.has(task.id)) continue;
       if (!task.id || remoteTaskKeys.has(task.id)) continue;
       if (normalizedName(task.creator) !== normalizedName(currentProfileName)) continue;
       if (!cache.spaceIdsByKey.has(task.project)) continue;
@@ -291,7 +299,7 @@
     }
     cache.tasks.clear();
     cache.taskHashes.clear();
-    for (const task of localTasks) {
+    for (const task of allRemoteTasks) {
       if (!task._supabaseId) continue;
       cache.tasks.set(task._supabaseId, task);
       cache.taskHashes.set(task._supabaseId, taskHash(task));
@@ -341,7 +349,7 @@
     window.dispatchEvent(new CustomEvent('shg:remote-ready', {
       detail: { tasks: localTasks.length, comments: comments.length, spaces: spaces.length },
     }));
-    if (pendingLocalTasks.length) {
+    if (pendingLocalTasks.length || tombstonedRemoteTasks.length) {
       setTimeout(() => syncTasks(localTasks, localActivity), 0);
     }
     return { remote: true, tasks: localTasks.length, comments: comments.length, spaces: spaces.length };

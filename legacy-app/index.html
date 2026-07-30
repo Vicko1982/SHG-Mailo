@@ -143,32 +143,34 @@
       </section>
     </div>
     <script src="bootstrap-data.js"></script>
-    <script src="auth.js?v=239"></script>
-    <script src="remote-sync.js?v=239"></script>
+    <script src="auth.js?v=240"></script>
+    <script src="remote-sync.js?v=240"></script>
     <script>
       (async () => {
-        try {
-          await window.shgEnsureFreshSession?.();
-          await window.shgPrepareRemoteData?.();
-        } catch (error) {
-          console.error('Could not load shared SHG data', error);
-          window.SHG_REMOTE_LOAD_ERROR = error;
-        }
-        const scripts = [
+        const loadScript = source => new Promise((resolve, reject) => {
+          const script = document.createElement('script');
+          script.src = source;
+          script.onload = resolve;
+          script.onerror = reject;
+          document.body.appendChild(script);
+        });
+        const dataScripts = [
           'jira-tasks.js',
           'victor-main-filter.js',
           ...Array.from({ length: 16 }, (_, index) => `jira-comments-${String(index + 1).padStart(2, '0')}.js`),
-          'app.js?v=239',
         ];
-        for (const source of scripts) {
-          await new Promise((resolve, reject) => {
-            const script = document.createElement('script');
-            script.src = source;
-            script.onload = resolve;
-            script.onerror = reject;
-            document.body.appendChild(script);
-          });
-        }
+        const staticDataReady = Promise.all(dataScripts.map(loadScript));
+        const remoteDataReady = (async () => {
+          try {
+            await window.shgEnsureFreshSession?.();
+            await window.shgPrepareRemoteData?.();
+          } catch (error) {
+            console.error('Could not load shared SHG data', error);
+            window.SHG_REMOTE_LOAD_ERROR = error;
+          }
+        })();
+        await Promise.all([staticDataReady, remoteDataReady]);
+        await loadScript('app.js?v=240');
         window.SHG_APP_LOADED = true;
         if (window.SHG_REMOTE_LOAD_ERROR && typeof window.toast === 'function') {
           window.toast(`The shared database is temporarily unavailable. Retrying automatically. ${window.SHG_REMOTE_LOAD_ERROR.message || ''}`.trim());
