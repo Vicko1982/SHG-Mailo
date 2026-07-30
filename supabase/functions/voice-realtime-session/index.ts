@@ -11,14 +11,18 @@ const instructions = `
 
 Κανόνες:
 - «Δημιούργησε Task» σημαίνει κανονικό Task. «Δημιούργησε Mini Task» σημαίνει Mini Task.
-- Αναγνωρίσιμο όνομα στην εντολή είναι ο Assignee. Μετέτρεψε ελληνικά μικρά ονόματα στο πληρέστερο πιθανό όνομα, αλλά το εργαλείο θα κάνει τον οριστικό έλεγχο.
-- Για Mini Task ο Assignee είναι υποχρεωτικός. Αν λείπει, ρώτησε μόνο ποιος είναι ο Assignee.
+- Κανένα όνομα μέσα στον τίτλο ή στο description δεν θεωρείται από μόνο του Assignee.
+- Όρισε Assignee μόνο όταν ο χρήστης πει ρητά «Assignee», «assign», «ανάθεσε στον/στην» ή άλλη ξεκάθαρη εντολή ανάθεσης.
+- Πριν ετοιμάσεις οποιοδήποτε Task, αν δεν υπάρχει ρητή απόφαση για Assignee, ρώτησε μόνο «Θέλεις να ορίσεις Assignee;».
+- Αν ο χρήστης απαντήσει όχι, στείλε assignee null και συμπερίλαβε το "assignee" στο explicitFields, ώστε το Task να μείνει Unassigned.
+- Για Mini Task ο Assignee είναι υποχρεωτικός. Αν λείπει, ρώτησε ποιος είναι ο Assignee και μην προχωρήσεις χωρίς όνομα.
 - Αν η εκφώνηση είναι μεγάλη, βάλε σύντομο, σαφή τίτλο και τις υπόλοιπες πληροφορίες στο description.
 - Χρησιμοποίησε prepare_voice_task μόλις έχεις type, title και, για Mini Task, assignee.
 - Μετά το αποτέλεσμα του prepare_voice_task διάβασε ακριβώς το summary και περίμενε ρητό «Ναι».
 - Μην ξανακάνεις περίληψη και μη ζητάς δεύτερη επιβεβαίωση.
 - Με «Ναι», «ΟΚ», «προχώρα» ή «δημιούργησέ το», κάλεσε confirm_voice_task.
 - Με «Όχι» ή «άκυρο», κάλεσε cancel_voice_task.
+- Με «Κλείσε», «Σταμάτα» ή «Κλείσε το Voice Task», κάλεσε αμέσως close_voice_task. Αυτό ακυρώνει κάθε draft και τερματίζει τη φωνητική σύνδεση.
 - Μια διόρθωση ενημερώνει το υπάρχον draft: κάλεσε ξανά prepare_voice_task με όλα τα ενημερωμένα στοιχεία.
 - Μην ισχυριστείς ποτέ ότι δημιουργήθηκε Task πριν επιστρέψει επιτυχώς το confirm_voice_task.
 - Σε αποτυχία, πες το πραγματικό error του εργαλείου.
@@ -61,6 +65,12 @@ const tools = [
     type: "function",
     name: "cancel_voice_task",
     description: "Cancel the current draft when the user says no or cancel.",
+    parameters: { type: "object", additionalProperties: false, properties: {} },
+  },
+  {
+    type: "function",
+    name: "close_voice_task",
+    description: "Cancel any current draft and close the Voice Task session when the user says close or stop.",
     parameters: { type: "object", additionalProperties: false, properties: {} },
   },
 ];

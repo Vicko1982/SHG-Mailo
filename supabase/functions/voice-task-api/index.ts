@@ -53,6 +53,17 @@ function normalize(value: unknown) {
     .toLocaleLowerCase("el");
 }
 
+function profileSearchTerms(value: unknown) {
+  const ignored = new Set([
+    "ο", "η", "το", "τον", "την", "του", "της", "στο", "στη", "στον", "στην",
+    "με", "για", "απο", "σε", "ως", "assignee", "assign", "αναθεση", "αναθεσε",
+    "αναθεσετο", "βαλε", "κανε",
+  ]);
+  const cleaned = normalize(value).replace(/[^\p{Letter}\p{Number}@.+_-]+/gu, " ");
+  const tokens = cleaned.split(/\s+/).filter((token) => token && !ignored.has(token));
+  return [...new Set([cleaned, tokens.join(" "), ...tokens].filter(Boolean))];
+}
+
 function cleanText(value: unknown, maximum: number) {
   return String(value ?? "").trim().replace(/\s+/g, " ").slice(0, maximum);
 }
@@ -75,20 +86,24 @@ function splitLongTitle(title: string, description: string) {
 }
 
 function resolveProfile(profiles: Profile[], value: unknown) {
-  const supplied = normalize(value);
+  const suppliedTerms = profileSearchTerms(value);
   const aliases: Record<string, string> = {
     "αγαπη": "agapi@shd.global",
     "agapi": "agapi@shd.global",
     "αλεξανδρος": "alexandros@shd.global",
+    "αλεξανδρο": "alexandros@shd.global",
     "alexandros": "alexandros@shd.global",
     "χαρα": "c.giannoula.law@gmail.com",
     "chara": "c.giannoula.law@gmail.com",
     "χρηστος": "chris@shd.global",
+    "χρηστο": "chris@shd.global",
     "chris": "chris@shd.global",
     "ντινος": "dinos@shd.global",
+    "ντινο": "dinos@shd.global",
     "dinos": "dinos@shd.global",
     "fang": "fang@shd.global",
     "φωτης": "fotis@shd.global",
+    "φωτη": "fotis@shd.global",
     "fotis": "fotis@shd.global",
     "γαληνη": "galini@shd.global",
     "galini": "galini@shd.global",
@@ -96,23 +111,37 @@ function resolveProfile(profiles: Profile[], value: unknown) {
     "ifigenia": "ifigenia@shd.global",
     "γιαννης": "jtzortzos@shd.global",
     "γιαννη": "jtzortzos@shd.global",
+    "γιαννου": "jtzortzos@shd.global",
+    "τζωρτζος": "jtzortzos@shd.global",
+    "τζορτζος": "jtzortzos@shd.global",
     "john": "jtzortzos@shd.global",
     "σακης": "sakisiliou80@gmail.com",
+    "σακη": "sakisiliou80@gmail.com",
     "sakis": "sakisiliou80@gmail.com",
     "assistant": "info+assistant@shd.global",
     "βοηθος": "info+assistant@shd.global",
     "βασιλης": "katsaros@tkcfinance.com",
+    "βασιλη": "katsaros@tkcfinance.com",
     "vasilis": "katsaros@tkcfinance.com",
     "βικτωρ": "victor@shd.global",
+    "βικτωρα": "victor@shd.global",
     "victor": "victor@shd.global",
   };
-  const wanted = aliases[supplied] ?? supplied;
-  if (!wanted || wanted === "unassigned" || wanted === "none") return null;
-  const exact = profiles.find((profile) =>
-    normalize(profile.full_name) === wanted || normalize(profile.email) === wanted
-  );
+  if (!suppliedTerms.length || suppliedTerms.some((term) => term === "unassigned" || term === "none")) return null;
+  const wantedTerms = [...new Set(suppliedTerms.flatMap((term) => [term, aliases[term]].filter(Boolean)))];
+  const exact = profiles.find((profile) => {
+    const fullName = normalize(profile.full_name);
+    const email = normalize(profile.email);
+    return wantedTerms.some((wanted) => fullName === wanted || email === wanted);
+  });
   if (exact) return exact;
-  const matches = profiles.filter((profile) => normalize(profile.full_name).startsWith(wanted));
+  const matches = profiles.filter((profile) => {
+    const fullName = normalize(profile.full_name);
+    const nameTokens = fullName.split(/\s+/);
+    return wantedTerms.some((wanted) =>
+      fullName.startsWith(wanted) || nameTokens.includes(wanted) || normalize(profile.email) === wanted
+    );
+  });
   if (matches.length === 1) return matches[0];
   if (matches.length > 1) {
     throw new Error(`Το όνομα «${value}» αντιστοιχεί σε περισσότερους χρήστες. Πες ολόκληρο το όνομα.`);
@@ -252,6 +281,7 @@ Deno.serve(async (request) => {
 
     if (request.method === "POST" && (path === "/drafts" || path === "/create")) {
       const input = await request.json() as DraftRequest;
+      const explicitFields = new Set((input.explicitFields ?? []).map(String));
       const createImmediately = path === "/create";
       if (createImmediately && input.confirmed !== true) {
         throw new Error("Απαιτείται ρητή επιβεβαίωση πριν από τη δημιουργία.");
@@ -264,7 +294,14 @@ Deno.serve(async (request) => {
       const rawDescription = String(input.description ?? "").trim().slice(0, 10_000);
       const shortened = splitLongTitle(rawTitle, rawDescription);
       const space = resolveSpace(activeSpaces, input.space);
-      const assignee = resolveProfile(activeProfiles, input.assignee);
+      if (!explicitFields.has("assignee")) {
+        return json({
+          ready: false,
+          missingField: "assigneeDecision",
+          question: "Θέλεις να ορίσεις Assignee;",
+        }, 422);
+      }
+      const assignee = input.assignee ? resolveProfile(activeProfiles, input.assignee) : null;
       const supervisor = resolveProfile(activeProfiles, input.supervisor);
       if (input.type === "mini_task" && !assignee) {
         return json({
@@ -284,7 +321,6 @@ Deno.serve(async (request) => {
         : null;
       const labels = [...new Set((input.labels ?? []).map((label) => cleanText(label, 60)).filter(Boolean))]
         .slice(0, 20);
-      const explicitFields = new Set((input.explicitFields ?? []).map(String));
       const payload = {
         title: shortened.title,
         description: shortened.description || null,
@@ -358,6 +394,15 @@ Deno.serve(async (request) => {
         url: `https://mailo.shd.global/?task=${encodeURIComponent(task.task_key)}`,
         message: `${task.task_key} δημιουργήθηκε επιτυχώς.`,
       });
+    }
+
+    const cancelMatch = path.match(/^\/drafts\/([0-9a-f-]+)\/cancel$/i);
+    if (request.method === "POST" && cancelMatch) {
+      const { error } = await admin.from("voice_task_drafts")
+        .update({ expires_at: new Date().toISOString() })
+        .eq("id", cancelMatch[1]).is("confirmed_at", null);
+      if (error) throw error;
+      return json({ cancelled: true, message: "Η δημιουργία ακυρώθηκε." });
     }
 
     return json({ error: "Not found" }, 404);

@@ -946,7 +946,17 @@ async function handleVoiceToolCall(event){
       const resultBox=document.getElementById('voiceTaskResult');if(resultBox)resultBox.innerHTML=`<a href="${esc(result.url)}">Άνοιγμα ${esc(result.taskKey)}</a>`;
       return
     }
-    if(name==='cancel_voice_task'){voiceRealtime.draft=null;sendVoiceToolOutput(callId,{cancelled:true,message:'Η δημιουργία ακυρώθηκε.'});return}
+    if(name==='cancel_voice_task'){
+      if(voiceRealtime.draft?.draftId)await voiceFunctionRequest(`/drafts/${voiceRealtime.draft.draftId}/cancel`,{});
+      voiceRealtime.draft=null;sendVoiceToolOutput(callId,{cancelled:true,message:'Η δημιουργία ακυρώθηκε.'});return
+    }
+    if(name==='close_voice_task'){
+      if(voiceRealtime.draft?.draftId)await voiceFunctionRequest(`/drafts/${voiceRealtime.draft.draftId}/cancel`,{});
+      voiceRealtime.draft=null;
+      sendVoiceToolOutput(callId,{cancelled:true,closed:true,message:'Η δημιουργία ακυρώθηκε και το Voice Task έκλεισε.'});
+      setTimeout(()=>closeVoiceTaskModal(),250);
+      return
+    }
     throw new Error(`Άγνωστη λειτουργία: ${name}`)
   }catch(error){const message=error?.message||String(error);sendVoiceToolOutput(callId,{error:message});setVoiceTaskStatus(message)}
 }
