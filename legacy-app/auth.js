@@ -54,8 +54,19 @@
 
   function updateAuthIdentity(value) {
     const email = value?.user?.email?.toLowerCase() || '';
+    const name = USER_NAMES[email] || '';
     window.SHG_AUTH_USER_EMAIL = email;
-    window.SHG_AUTH_USER_NAME = USER_NAMES[email] || '';
+    window.SHG_AUTH_USER_NAME = name;
+    const nameElement = document.getElementById('currentUserName');
+    const avatarElement = document.getElementById('currentUserAvatar');
+    const roleElement = document.getElementById('roleLabel');
+    if (nameElement) nameElement.textContent = name || 'Loading user…';
+    if (avatarElement) {
+      avatarElement.textContent = name
+        ? name.split(/\s+/).filter(Boolean).map(part => part[0]).join('').slice(0, 2).toUpperCase()
+        : '…';
+    }
+    if (roleElement) roleElement.textContent = name ? 'Loading permissions…' : '';
   }
 
   function storeSession(value) {

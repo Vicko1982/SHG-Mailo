@@ -59,8 +59,8 @@
           <button id="logoutBtn" type="button" role="menuitem"><span>↪</span> Logout</button>
         </div>
         <button id="sidebarUserButton" class="sidebar-footer" type="button" aria-haspopup="menu" aria-expanded="false">
-          <div id="currentUserAvatar" class="avatar">VS</div>
-          <div class="user-meta"><strong id="currentUserName">Victor Stavropoulos</strong><span id="roleLabel">Administrator</span></div>
+          <div id="currentUserAvatar" class="avatar">…</div>
+          <div class="user-meta"><strong id="currentUserName">Loading user…</strong><span id="roleLabel">Loading permissions…</span></div>
           <span class="dots" aria-hidden="true">•••</span>
         </button>
       </aside>
@@ -143,8 +143,8 @@
       </section>
     </div>
     <script src="bootstrap-data.js"></script>
-    <script src="auth.js?v=238"></script>
-    <script src="remote-sync.js?v=238"></script>
+    <script src="auth.js?v=239"></script>
+    <script src="remote-sync.js?v=239"></script>
     <script>
       (async () => {
         try {
@@ -158,7 +158,7 @@
           'jira-tasks.js',
           'victor-main-filter.js',
           ...Array.from({ length: 16 }, (_, index) => `jira-comments-${String(index + 1).padStart(2, '0')}.js`),
-          'app.js?v=237',
+          'app.js?v=239',
         ];
         for (const source of scripts) {
           await new Promise((resolve, reject) => {

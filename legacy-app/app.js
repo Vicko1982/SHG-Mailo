@@ -682,6 +682,7 @@ function submitTaskDetails(id){
   if(row){row.id=task.id;row.summary=task.title;row.projectKey=task.project;row.space=PROJECTS[task.project]?.name||task.project;row.labels=[...task.labels];row.assignee=task.assignee;row.supervisor=task.supervisor;row.approver=task.approver;row.priority=task.priority;row.dueDate=task.dueDate;row.status=task.jiraStatus;row.updated=changedAt}
   save();taskDetailsDirtyId=null;taskDetailsDraft=null;closeModal(true);render();toast(`${task.id} changes submitted`);
   for(const comment of pendingMentionComments)sendMentionEmails(task,comment);
+  if(previousAssignments.assignee!==task.assignee&&task.assignee&&task.assignee!=='Unassigned')sendAssigneeChangedEmail(task,previousAssignments.assignee,changedAt);
   }catch(error){
     console.error('Task submission failed',error);
     toast(error?.message||'The task changes could not be submitted');
@@ -740,6 +741,17 @@ function mentionedPeopleInComment(text){
     })
     .map(person=>person.name);
 }
+async function invokeNotificationWithRetry(payload,attempts=3){
+  let lastError;
+  for(let attempt=1;attempt<=attempts;attempt+=1){
+    try{return await window.shgInvokeFunction('send-mention-email',payload)}
+    catch(error){
+      lastError=error;
+      if(attempt<attempts)await new Promise(resolve=>setTimeout(resolve,attempt*900));
+    }
+  }
+  throw lastError;
+}
 function sendMentionEmails(task,comment){
   if(comment.system||comment.automationType||typeof window.shgInvokeFunction!=='function')return;
   const explicitlyMentioned=mentionedPeopleInComment(comment.text),recipientRoles={};
@@ -748,7 +760,7 @@ function sendMentionEmails(task,comment){
   const supervisor=taskSupervisor(task);if(supervisor&&supervisor!=='Unassigned')recipientRoles[supervisor]=[...(recipientRoles[supervisor]||[]),'Supervisor'];
   const mentionedNames=[...new Set(Object.keys(recipientRoles).filter(name=>name!==CURRENT_USER))];
   if(!mentionedNames.length)return;
-  window.shgInvokeFunction('send-mention-email',{
+  invokeNotificationWithRetry({
     notificationType:'comment',
     taskKey:task.id,
     taskTitle:task.title,
@@ -767,13 +779,34 @@ function sendMentionEmails(task,comment){
     toast('Comment saved, but the mention email could not be sent');
   });
 }
+function sendAssigneeChangedEmail(task,previousAssignee,changedAt){
+  if(typeof window.shgInvokeFunction!=='function'||!task.assignee||task.assignee==='Unassigned'||task.assignee===CURRENT_USER)return;
+  const comment=`${CURRENT_USER} changed the Assignee from ${previousAssignee||'Unassigned'} to ${task.assignee}. You are now the Assignee of this task.`;
+  invokeNotificationWithRetry({
+    notificationType:'comment',
+    taskKey:task.id,
+    taskTitle:task.title,
+    comment,
+    commentId:`assignee-change:${task.id}:${changedAt}`,
+    authorName:CURRENT_USER,
+    mentionedNames:[task.assignee],
+    recipientRoles:{[task.assignee]:['Assignee']},
+  }).then(result=>{
+    if(result.sent>0)toast(`Assignment email sent to ${task.assignee}`);
+    const waiting=Math.max(0,(result.queued||0)-(result.sent||0));
+    if(waiting>0)toast(`Assignment email for ${task.assignee} is safely queued`);
+  }).catch(error=>{
+    console.error('Assignee change notification failed',error);
+    toast(`The Assignee changed, but the email to ${task.assignee} could not be sent`);
+  });
+}
 function sendTaskCreatedEmails(task){
   if(typeof window.shgInvokeFunction!=='function')return;
   const recipientRoles={};
   for(const [name,role] of [[task.assignee,'Assignee'],[task.supervisor,'Supervisor'],[task.approver,'Approver']])if(name&&name!=='Unassigned')recipientRoles[name]=[...(recipientRoles[name]||[]),role];
   const recipientNames=[...new Set(Object.keys(recipientRoles).filter(name=>name!==CURRENT_USER))];
   if(!recipientNames.length)return;
-  window.shgInvokeFunction('send-mention-email',{
+  invokeNotificationWithRetry({
     notificationType:'task_created',
     taskKey:task.id,
     taskTitle:task.title,
@@ -982,8 +1015,13 @@ document.addEventListener('pointerdown',event=>{if(!event.target.closest('.task-
 document.addEventListener('click',event=>{document.querySelectorAll('details[open]').forEach(dropdown=>{if(!dropdown.contains(event.target))dropdown.removeAttribute('open')});if(state.openColumnMenu||state.openColumnChooser||state.cellEditor){state.openColumnMenu=null;state.openColumnChooser=false;state.columnFilterDraft=null;state.cellEditor=null;if(state.view==='list')renderList()}});
 document.addEventListener('click',()=>requestAnimationFrame(adjustDropdownDirections),true);window.addEventListener('resize',adjustDropdownDirections);
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal()});window.addEventListener('pagehide',saveLastWorkspaceState);window.addEventListener('beforeunload',saveLastWorkspaceState);{const savedSidebar=localStorage.getItem('shg-sidebar-collapsed'),mobileSidebar=window.matchMedia('(max-width:850px)').matches;setSidebarState(savedSidebar===null?mobileSidebar:savedSidebar==='true')}document.getElementById('searchInput').value=state.query;document.getElementById('projectCrumb').textContent=state.project==='all'?'ALL SPACES':PROJECTS[state.project]?.name.toUpperCase()||'ALL SPACES';renderAssigneeFilter();render();restoreLastWorkspacePosition();
-const linkedTaskId=new URLSearchParams(location.search).get('task');
-if(linkedTaskId)setTimeout(()=>{const linkedTask=state.tasks.find(task=>task.id===linkedTaskId);if(linkedTask)openTask(linkedTask.id)},0);
+const initialUrlParameters=new URLSearchParams(location.search),linkedTaskId=initialUrlParameters.get('task');
+if(linkedTaskId){
+  initialUrlParameters.delete('task');
+  const remainingQuery=initialUrlParameters.toString();
+  history.replaceState(null,'',`${location.pathname}${remainingQuery?`?${remainingQuery}`:''}${location.hash}`);
+  setTimeout(()=>{const linkedTask=state.tasks.find(task=>task.id===linkedTaskId);if(linkedTask)openTask(linkedTask.id)},0);
+}
 const voiceLaunchRequested=new URLSearchParams(location.search).get('voice')==='1';
 if(voiceLaunchRequested)setTimeout(()=>{
   if(isMainAdmin())openVoiceTaskModal();
