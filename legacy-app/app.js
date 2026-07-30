@@ -870,7 +870,7 @@ async function revokeSiriDevice(){
   try{await window.shgInvokeFunction('siri-voice-task',{action:'revoke'});siriSetupConfig=null;closeModal(true);toast('Siri connection revoked')}catch(error){toast(error?.message||String(error))}
 }
 function renderVoiceTaskModal(message='Συνδέομαι με τον φωνητικό βοηθό…'){
-  document.getElementById('modalContent').innerHTML=`<div class="voice-task-panel realtime"><p class="eyebrow">MAILO VOICE TASK</p><h2 id="modalTitle">Create with your voice</h2><div class="voice-task-orb" aria-hidden="true"></div><p class="voice-task-status">${esc(message)}</p><p class="voice-task-help">Μιλήστε φυσικά. Η ίδια σύνδεση θα περιμένει την επιβεβαίωση ή τη διόρθωσή σας.</p><div id="voiceTaskTranscript" class="voice-task-transcript" aria-live="polite">Η συνομιλία θα εμφανιστεί εδώ…</div><div id="voiceTaskResult" class="voice-task-result"></div><div class="voice-task-actions"><button type="button" class="action-btn" onclick="closeVoiceTaskModal()">Cancel</button></div></div>`;showModal()
+  document.getElementById('modalContent').innerHTML=`<div class="voice-task-panel realtime"><p class="eyebrow">MAILO VOICE TASK</p><h2 id="modalTitle">Create with your voice</h2><div class="voice-task-orb" aria-hidden="true"></div><p class="voice-task-status">${esc(message)}</p><p class="voice-task-help">Μιλήστε φυσικά. Η ίδια σύνδεση θα περιμένει την επιβεβαίωση ή τη διόρθωσή σας.</p><p id="voiceAudioDiagnostic" class="voice-audio-diagnostic" aria-live="polite">Audio: connecting…</p><div id="voiceTaskTranscript" class="voice-task-transcript" aria-live="polite">Η συνομιλία θα εμφανιστεί εδώ…</div><div id="voiceTaskResult" class="voice-task-result"></div><div class="voice-task-actions"><button type="button" class="action-btn" onclick="closeVoiceTaskModal()">Cancel</button></div></div>`;showModal()
 }
 function setVoiceTaskStatus(message,listening=false){
   const status=document.querySelector('.voice-task-status'),panel=document.querySelector('.voice-task-panel');
@@ -883,6 +883,12 @@ function appendVoiceTranscript(role,text){
   if(box.textContent==='Η συνομιλία θα εμφανιστεί εδώ…')box.innerHTML='';
   const line=document.createElement('div');line.className=`voice-transcript-line ${role}`;line.innerHTML=`<strong>${role==='user'?'Εσείς':'Mailo'}:</strong> ${esc(String(text).trim())}`;box.appendChild(line);box.scrollTop=box.scrollHeight
 }
+function setVoiceAudioDiagnostic(message,state='pending'){
+  const diagnostic=document.getElementById('voiceAudioDiagnostic');
+  if(!diagnostic)return;
+  diagnostic.textContent=`Audio: ${message}`;
+  diagnostic.dataset.state=state
+}
 function showVoicePlaybackControl(){
   const actions=document.querySelector('.voice-task-actions');
   if(!actions||document.getElementById('enableVoiceAudioBtn'))return;
@@ -890,15 +896,25 @@ function showVoicePlaybackControl(){
   setVoiceTaskStatus('Το Safari έχει μπλοκάρει προσωρινά τη φωνή. Πατήστε Enable Voice.')
 }
 async function enableVoicePlayback(){
-  const audio=voiceRealtime?.audio;
-  if(!audio)return;
+  const active=voiceRealtime;if(!active)return;
   try{
-    audio.muted=false;audio.volume=1;
-    await audio.play();
+    if(active.audioContext&&active.audioContext.state!=='running')await active.audioContext.resume();
+    if(active.audioContext?.state==='running'&&active.remoteStream){
+      if(!active.audioSource){
+        active.audioSource=active.audioContext.createMediaStreamSource(active.remoteStream);
+        active.audioSource.connect(active.audioContext.destination)
+      }
+      active.audio.muted=true;
+    }else{
+      active.audio.muted=false;active.audio.volume=1;
+      await active.audio.play()
+    }
     document.getElementById('enableVoiceAudioBtn')?.remove();
+    setVoiceAudioDiagnostic('playing','playing');
     setVoiceTaskStatus('Η φωνή ενεργοποιήθηκε. Περιμένω την απάντησή σας…',true)
   }catch(error){
     console.warn('Voice audio playback is still blocked',error);
+    setVoiceAudioDiagnostic(`blocked (${error?.message||'playback error'})`,'error');
     setVoiceTaskStatus('Το Safari εξακολουθεί να εμποδίζει τον ήχο. Ελέγξτε ότι το site δεν είναι σε σίγαση.')
   }
 }
@@ -938,7 +954,13 @@ function handleVoiceRealtimeEvent(event){
   if(event.type==='input_audio_buffer.speech_started')setVoiceTaskStatus('Ακούω…',true);
   if(event.type==='input_audio_buffer.speech_stopped')setVoiceTaskStatus('Επεξεργάζομαι την εντολή…');
   if(event.type==='conversation.item.input_audio_transcription.completed')appendVoiceTranscript('user',event.transcript);
-  if(event.type==='response.output_audio_transcript.done')appendVoiceTranscript('assistant',event.transcript);
+  if(event.type==='response.output_audio_transcript.done'){
+    appendVoiceTranscript('assistant',event.transcript);
+    if(!voiceRealtime?.trackReceived){
+      setVoiceAudioDiagnostic('response received without an audio track','error');
+      showVoicePlaybackControl()
+    }
+  }
   if(event.type==='response.function_call_arguments.done'||(event.type==='response.output_item.done'&&event.item?.type==='function_call'))handleVoiceToolCall(event);
   if(event.type==='response.done'){
     voiceRealtime.usage=event.response?.usage||voiceRealtime.usage;
@@ -950,9 +972,14 @@ function handleVoiceRealtimeEvent(event){
 async function openVoiceTaskModal(){
   if(!isMainAdmin()){toast('Voice Task is available only to the Main Admin');return}
   renderVoiceTaskModal();
-  let stream=null,audio=null;
+  let stream=null,audio=null,audioContext=null;
   try{
     if(!navigator.mediaDevices?.getUserMedia||!window.RTCPeerConnection)throw new Error('Ο browser δεν υποστηρίζει ασφαλή Realtime φωνητική σύνδεση.');
+    const AudioContextClass=window.AudioContext||window.webkitAudioContext;
+    if(AudioContextClass){
+      audioContext=new AudioContextClass();
+      audioContext.resume().catch(()=>{})
+    }
     const streamRequest=navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
     const tokenRequest=window.shgInvokeFunction('voice-realtime-session',{action:'start'});
     const results=await Promise.all([streamRequest,tokenRequest]);stream=results[0];
@@ -964,15 +991,42 @@ async function openVoiceTaskModal(){
     audio.style.position='fixed';audio.style.width='1px';audio.style.height='1px';audio.style.opacity='0';audio.style.pointerEvents='none';
     document.body.appendChild(audio);
     peer.ontrack=event=>{
-      audio.srcObject=event.streams[0];
-      const startPlayback=()=>audio.play().then(()=>document.getElementById('enableVoiceAudioBtn')?.remove()).catch(error=>{console.warn('Voice audio autoplay was blocked',error);showVoicePlaybackControl()});
+      const remoteStream=event.streams[0]||new MediaStream([event.track]);
+      if(voiceRealtime){voiceRealtime.trackReceived=true;voiceRealtime.remoteStream=remoteStream}
+      setVoiceAudioDiagnostic('track received','received');
+      audio.srcObject=remoteStream;
+      const startPlayback=async()=>{
+        try{
+          if(audioContext){
+            if(audioContext.state!=='running')await audioContext.resume();
+            if(voiceRealtime&&!voiceRealtime.audioSource){
+              voiceRealtime.audioSource=audioContext.createMediaStreamSource(remoteStream);
+              voiceRealtime.audioSource.connect(audioContext.destination)
+            }
+            if(audioContext.state==='running'){
+              audio.muted=true;
+              setVoiceAudioDiagnostic('playing through Web Audio','playing');
+              document.getElementById('enableVoiceAudioBtn')?.remove();
+              return
+            }
+          }
+          audio.muted=false;audio.volume=1;
+          await audio.play();
+          setVoiceAudioDiagnostic('playing','playing');
+          document.getElementById('enableVoiceAudioBtn')?.remove()
+        }catch(error){
+          console.warn('Voice audio playback was blocked',error);
+          setVoiceAudioDiagnostic(`blocked (${error?.message||'playback error'})`,'error');
+          showVoicePlaybackControl()
+        }
+      };
       audio.addEventListener('loadedmetadata',startPlayback,{once:true});
       startPlayback()
     };
     stream.getTracks().forEach(track=>peer.addTrack(track,stream));
     const dataChannel=peer.createDataChannel('oai-events'),sessionId=crypto.randomUUID(),startedAt=Date.now();
-    voiceRealtime={peer,audio,stream,dataChannel,sessionId,startedAt,draft:null,created:null,usage:null,error:null,handledCalls:new Set()};
-    dataChannel.addEventListener('open',()=>setVoiceTaskStatus('Ακούω την εντολή σας…',true));
+    voiceRealtime={peer,audio,audioContext,audioSource:null,remoteStream:null,trackReceived:false,stream,dataChannel,sessionId,startedAt,draft:null,created:null,usage:null,error:null,handledCalls:new Set()};
+    dataChannel.addEventListener('open',()=>{setVoiceTaskStatus('Ακούω την εντολή σας…',true);setVoiceAudioDiagnostic('waiting for assistant response')});
     dataChannel.addEventListener('message',message=>{try{handleVoiceRealtimeEvent(JSON.parse(message.data))}catch(error){console.error('Voice event',error)}});
     dataChannel.addEventListener('close',()=>setVoiceTaskStatus('Η φωνητική σύνδεση έκλεισε.'));
     const offer=await peer.createOffer();await peer.setLocalDescription(offer);
@@ -980,7 +1034,7 @@ async function openVoiceTaskModal(){
     if(!response.ok)throw new Error((await response.text())||`Realtime connection failed (${response.status})`);
     await peer.setRemoteDescription({type:'answer',sdp:await response.text()})
   }catch(error){
-    stream?.getTracks()?.forEach(track=>track.stop());audio?.remove();
+    stream?.getTracks()?.forEach(track=>track.stop());audio?.remove();audioContext?.close?.().catch(()=>{});
     console.error('Voice Task connection',error);
     setVoiceTaskStatus(error?.message||'Δεν ήταν δυνατή η φωνητική σύνδεση.');
     const help=document.querySelector('.voice-task-help'),actions=document.querySelector('.voice-task-actions');
@@ -990,7 +1044,7 @@ async function openVoiceTaskModal(){
 }
 function closeVoiceTaskModal(){
   const active=voiceRealtime;voiceRealtime=null;
-  if(active){try{active.dataChannel?.close()}catch{}try{active.peer?.close()}catch{}active.stream?.getTracks()?.forEach(track=>track.stop());active.audio?.pause();active.audio?.remove();window.shgInvokeFunction?.('voice-realtime-session',{action:'log',sessionId:active.sessionId,durationSeconds:Math.round((Date.now()-active.startedAt)/1000),usage:active.usage||{},error:active.error||null}).catch(()=>{})}
+  if(active){try{active.dataChannel?.close()}catch{}try{active.peer?.close()}catch{}try{active.audioSource?.disconnect()}catch{}active.audioContext?.close?.().catch(()=>{});active.stream?.getTracks()?.forEach(track=>track.stop());active.audio?.pause();active.audio?.remove();window.shgInvokeFunction?.('voice-realtime-session',{action:'log',sessionId:active.sessionId,durationSeconds:Math.round((Date.now()-active.startedAt)/1000),usage:active.usage||{},error:active.error||null}).catch(()=>{})}
   document.getElementById('voiceTaskBtn')?.classList.remove('listening');closeModal(true)
 }
 function miniTaskModal(){
