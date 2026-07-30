@@ -964,7 +964,7 @@ function handleVoiceRealtimeEvent(event){
   if(event.type==='response.function_call_arguments.done'||(event.type==='response.output_item.done'&&event.item?.type==='function_call'))handleVoiceToolCall(event);
   if(event.type==='response.done'){
     voiceRealtime.usage=event.response?.usage||voiceRealtime.usage;
-    if(voiceRealtime.created){setVoiceTaskStatus(`${voiceRealtime.created.taskKey} δημιουργήθηκε επιτυχώς.`);setTimeout(()=>{const url=voiceRealtime?.created?.url;closeVoiceTaskModal();if(url)location.href=url},2200)}
+    if(voiceRealtime.created){const taskKey=voiceRealtime.created.taskKey;setVoiceTaskStatus(`${taskKey} δημιουργήθηκε επιτυχώς.`);setTimeout(()=>{closeVoiceTaskModal();render();toast(`${taskKey} δημιουργήθηκε επιτυχώς`)},2200)}
     else setVoiceTaskStatus('Περιμένω την απάντησή σας…',true)
   }
   if(event.type==='error'){const message=event.error?.message||'Προέκυψε σφάλμα στη φωνητική σύνδεση.';setVoiceTaskStatus(message);voiceRealtime.error=message}
