@@ -170,7 +170,7 @@
           }
         })();
         await Promise.all([staticDataReady, remoteDataReady]);
-        await loadScript('app.js?v=244');
+        await loadScript('app.js?v=245');
         window.SHG_APP_LOADED = true;
         if (window.SHG_REMOTE_LOAD_ERROR && typeof window.toast === 'function') {
           window.toast(`The shared database is temporarily unavailable. Retrying automatically. ${window.SHG_REMOTE_LOAD_ERROR.message || ''}`.trim());

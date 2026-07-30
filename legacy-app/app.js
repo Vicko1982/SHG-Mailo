@@ -1048,7 +1048,10 @@ async function openVoiceTaskModal(){
     console.error('Voice Task connection',error);
     setVoiceTaskStatus(error?.message||'Δεν ήταν δυνατή η φωνητική σύνδεση.');
     const help=document.querySelector('.voice-task-help'),actions=document.querySelector('.voice-task-actions');
-    if(help)help.textContent='Ελέγξτε ότι επιτρέπεται το μικρόφωνο και δοκιμάστε ξανά.';
+    const microphoneError=['NotAllowedError','PermissionDeniedError','NotFoundError','DevicesNotFoundError'].includes(error?.name);
+    if(help)help.textContent=microphoneError
+      ? 'Επιτρέψτε την πρόσβαση στο μικρόφωνο για το mailo.shd.global και δοκιμάστε ξανά.'
+      : 'Η φωνητική υπηρεσία δεν ξεκίνησε. Το μικρόφωνό σας δεν χρειάζεται νέα άδεια· δοκιμάστε ξανά.';
     if(actions&&!document.getElementById('retryVoiceTaskBtn'))actions.insertAdjacentHTML('afterbegin','<button id="retryVoiceTaskBtn" type="button" class="primary-btn" onclick="openVoiceTaskModal()">Start Voice</button>')
   }
 }
