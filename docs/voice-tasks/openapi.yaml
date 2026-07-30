@@ -1,0 +1,100 @@
+openapi: 3.1.0
+info:
+  title: Mailo Voice Tasks API
+  description: Prepare and confirm Tasks and Mini Tasks in Mailo.
+  version: 1.0.0
+servers:
+  - url: https://ewjalucwaeotamodlajs.supabase.co/functions/v1/voice-task-api
+security:
+  - bearerAuth: []
+paths:
+  /context:
+    get:
+      operationId: getMailoTaskContext
+      summary: Get current Mailo users, Spaces, defaults, and voice-task rules.
+      responses:
+        "200":
+          description: Current Task creation context.
+  /drafts:
+    post:
+      operationId: prepareMailoTask
+      summary: Validate a requested Task and prepare the spoken confirmation. This does not create a Task.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DraftRequest"
+      responses:
+        "200":
+          description: Draft prepared and waiting for explicit user confirmation.
+        "422":
+          description: A required field is missing, such as the Assignee for a Mini Task.
+  /drafts/{draftId}/confirm:
+    post:
+      operationId: confirmMailoTask
+      summary: Create a previously prepared Task only after the user explicitly confirms it.
+      parameters:
+        - in: path
+          name: draftId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirmationToken]
+              properties:
+                confirmationToken:
+                  type: string
+                  description: The opaque token returned by prepareMailoTask. Never invent or alter it.
+      responses:
+        "200":
+          description: Task created successfully.
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    DraftRequest:
+      type: object
+      required: [type, title, explicitFields]
+      properties:
+        type:
+          type: string
+          enum: [task, mini_task]
+          description: Use task only when the user says Task, and mini_task only when the user says Mini Task.
+        title:
+          type: string
+          description: A short, clear title. Move extra detail to description.
+        description:
+          type: [string, "null"]
+          description: Remaining detail from a long voice request.
+        space:
+          type: [string, "null"]
+        assignee:
+          type: [string, "null"]
+          description: Required for Mini Tasks.
+        supervisor:
+          type: [string, "null"]
+        priority:
+          type: [string, "null"]
+          enum: [Highest, High, Medium, Low, Lowest, null]
+        dueDate:
+          type: [string, "null"]
+          format: date
+        labels:
+          type: array
+          items:
+            type: string
+        explicitFields:
+          type: array
+          description: Include only fields explicitly stated by the user. Always include title.
+          items:
+            type: string
+            enum: [title, description, space, assignee, supervisor, priority, dueDate, labels]

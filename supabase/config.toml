@@ -1,1 +1,4 @@
 project_id = "ewjalucwaeotamodlajs"
+
+[functions.voice-task-api]
+verify_jwt = false
