@@ -847,32 +847,54 @@ function parseVoiceTask(transcript){
   return {type:isMini?'mini_task':'task',title:shortened.title,description:shortened.description,assignee:assigneeMatch?.name||'Unassigned',project:defaultTaskProjectKey(),priority:'Medium',supervisor:'Unassigned',dueDate:isMini?tomorrowDate():null};
 }
 function voiceDraftSummary(draft){return `Θα δημιουργήσω ${draft.type==='mini_task'?'Mini Task':'Task'} με τίτλο «${draft.title}»${draft.assignee!=='Unassigned'?` και Assignee τον ${draft.assignee}`:''}. Να το δημιουργήσω;`}
-function renderVoiceTaskModal(message='Πατήστε το μικρόφωνο και πείτε την εντολή σας.',transcript=''){
-  document.getElementById('modalContent').innerHTML=`<div class="voice-task-panel"><p class="eyebrow">MAILO VOICE TASK</p><h2 id="modalTitle">Create with your voice</h2><div class="voice-task-orb" aria-hidden="true"></div><p class="voice-task-status">${esc(message)}</p><p class="voice-task-help">Παράδειγμα: «Δημιούργησε Mini Task, ο Γιάννης να σπάσει τα τζάμια».</p><textarea id="voiceTaskTranscript" class="voice-task-transcript" placeholder="Η εκφώνηση θα εμφανιστεί εδώ…">${esc(transcript)}</textarea><div class="voice-task-actions"><button type="button" class="action-btn" onclick="closeVoiceTaskModal()">Cancel</button><button id="voiceListenBtn" type="button" class="primary-btn" onclick="startVoiceTaskListening()">🎙 Start listening</button><button type="button" class="action-btn" onclick="prepareVoiceTaskFromText()">Prepare</button></div></div>`;showModal()
+function renderVoiceTaskModal(message='Ακούω την εντολή σας…',transcript=''){
+  document.getElementById('modalContent').innerHTML=`<div class="voice-task-panel"><p class="eyebrow">MAILO VOICE TASK</p><h2 id="modalTitle">Create with your voice</h2><div class="voice-task-orb" aria-hidden="true"></div><p class="voice-task-status">${esc(message)}</p><p class="voice-task-help">Παράδειγμα: «Δημιούργησε Mini Task, ο Γιάννης να σπάσει τα τζάμια».</p><div id="voiceTaskTranscript" class="voice-task-transcript" aria-live="polite">${esc(transcript)||'Η εκφώνηση θα εμφανιστεί εδώ…'}</div><div class="voice-task-actions"><button type="button" class="action-btn" onclick="closeVoiceTaskModal()">Cancel</button><button id="voiceFallbackBtn" type="button" class="primary-btn hidden">Απάντηση</button></div></div>`;showModal()
 }
-function openVoiceTaskModal(){if(!isMainAdmin()){toast('Voice Task is available only to the Main Admin');return}voiceDraft=null;voiceConfirmationListening=false;renderVoiceTaskModal()}
+function openVoiceTaskModal(){if(!isMainAdmin()){toast('Voice Task is available only to the Main Admin');return}voiceDraft=null;voiceConfirmationListening=false;renderVoiceTaskModal();startVoiceTaskListening()}
 function closeVoiceTaskModal(){try{voiceRecognition?.abort()}catch{}voiceRecognition=null;voiceDraft=null;voiceConfirmationListening=false;speechSynthesis?.cancel();closeModal(true)}
-function setVoiceListening(active){document.querySelector('.voice-task-panel')?.classList.toggle('listening',active);document.getElementById('voiceTaskBtn')?.classList.toggle('listening',active);const button=document.getElementById('voiceListenBtn');if(button){button.disabled=active;button.textContent=active?'Listening…':'🎙 Start listening'}}
+function setVoiceListening(active){document.querySelector('.voice-task-panel')?.classList.toggle('listening',active);document.getElementById('voiceTaskBtn')?.classList.toggle('listening',active)}
+function showVoiceFallback(message,confirmation=false,label='Απάντηση'){
+  const status=document.querySelector('.voice-task-status'),button=document.getElementById('voiceFallbackBtn');
+  if(status)status.textContent=message;
+  if(button){button.textContent=label;button.classList.remove('hidden');button.onclick=()=>{button.classList.add('hidden');startVoiceTaskListening(confirmation)}}
+}
 function startVoiceTaskListening(confirmation=false){
   if(!isMainAdmin())return;
   const Recognition=window.SpeechRecognition||window.webkitSpeechRecognition;
-  if(!Recognition){toast('Voice recognition is not supported in this browser. Use Safari or Chrome, or type the command in the box.');return}
+  if(!Recognition){showVoiceFallback('Η φωνητική αναγνώριση δεν υποστηρίζεται σε αυτόν τον browser.',confirmation,'Δοκιμή ξανά');return}
   try{voiceRecognition?.abort()}catch{}
   voiceConfirmationListening=confirmation;
   voiceRecognition=new Recognition();voiceRecognition.lang='el-GR';voiceRecognition.interimResults=true;voiceRecognition.continuous=false;
-  let finalText='';
-  voiceRecognition.onstart=()=>setVoiceListening(true);
-  voiceRecognition.onresult=event=>{let interim='';for(let index=event.resultIndex;index<event.results.length;index++){const text=event.results[index][0].transcript;if(event.results[index].isFinal)finalText+=text;else interim+=text}if(!confirmation){const box=document.getElementById('voiceTaskTranscript');if(box)box.value=(finalText||interim).trim()}};
-  voiceRecognition.onerror=event=>{setVoiceListening(false);if(event.error!=='aborted')toast(event.error==='not-allowed'?'Allow microphone access to use Voice Task.':'I could not hear the command. Please try again.')};
-  voiceRecognition.onend=()=>{setVoiceListening(false);const heard=finalText.trim();if(confirmation){if(/^(ναι|οκ|ok|yes|δημιουργησε το|δημιούργησέ το)/i.test(voiceNormalize(heard)))confirmVoiceTaskCreation();else if(heard)toast('Πες «Ναι» ή πάτησε Create Task.');return}if(heard)prepareVoiceTaskFromText()};
-  voiceRecognition.start()
+  let finalText='',latestText='',recognitionError=false;
+  voiceRecognition.onstart=()=>{setVoiceListening(true);const status=document.querySelector('.voice-task-status'),button=document.getElementById('voiceFallbackBtn');if(status)status.textContent=confirmation?'Πείτε «Ναι», «Όχι» ή τη διόρθωσή σας…':'Ακούω την εντολή σας…';button?.classList.add('hidden')};
+  voiceRecognition.onresult=event=>{let interim='';for(let index=event.resultIndex;index<event.results.length;index++){const text=event.results[index][0].transcript;if(event.results[index].isFinal)finalText+=text;else interim+=text}latestText=(finalText||interim).trim();if(!confirmation){const box=document.getElementById('voiceTaskTranscript');if(box)box.textContent=latestText||'Η εκφώνηση θα εμφανιστεί εδώ…'}};
+  voiceRecognition.onerror=event=>{setVoiceListening(false);if(event.error==='aborted')return;recognitionError=true;showVoiceFallback(event.error==='not-allowed'?'Επιτρέψτε την πρόσβαση στο μικρόφωνο και πατήστε «Απάντηση».':'Δεν άκουσα καθαρά. Πατήστε για να προσπαθήσετε ξανά.',confirmation,confirmation?'Απάντηση':'Δοκιμή ξανά')};
+  voiceRecognition.onend=()=>{setVoiceListening(false);if(recognitionError)return;const heard=(finalText||latestText).trim();if(confirmation){handleVoiceConfirmation(heard);return}if(heard)prepareVoiceTaskFromText(heard);else showVoiceFallback('Δεν άκουσα κάποια εντολή. Πατήστε για να προσπαθήσετε ξανά.',false,'Δοκιμή ξανά')};
+  try{voiceRecognition.start()}catch{showVoiceFallback('Ο browser εμπόδισε την αυτόματη ακρόαση. Πατήστε για να συνεχίσετε.',confirmation,confirmation?'Απάντηση':'Έναρξη')}
 }
-function prepareVoiceTaskFromText(){
-  const transcript=document.getElementById('voiceTaskTranscript')?.value.trim();if(!transcript){toast('Πείτε ή γράψτε πρώτα την εντολή.');return}
-  const draft=parseVoiceTask(transcript);if(draft.error){renderVoiceTaskModal(draft.error,transcript);voiceSpeak(draft.error);return}
+function prepareVoiceTaskFromText(transcript){
+  transcript=String(transcript||'').trim();if(!transcript){showVoiceFallback('Δεν άκουσα κάποια εντολή. Πατήστε για να προσπαθήσετε ξανά.',false,'Δοκιμή ξανά');return}
+  const draft=parseVoiceTask(transcript);if(draft.error){renderVoiceTaskModal(draft.error,transcript);voiceSpeak(draft.error,()=>startVoiceTaskListening());return}
   voiceDraft=draft;const summary=voiceDraftSummary(draft);
-  document.getElementById('modalContent').innerHTML=`<div class="voice-task-panel"><p class="eyebrow">CONFIRM VOICE TASK</p><h2 id="modalTitle">Ready to create</h2><div class="voice-summary"><strong>${draft.type==='mini_task'?'Mini Task':'Task'}</strong><div>${esc(draft.title)}</div>${draft.assignee!=='Unassigned'?`<div>Assignee: ${esc(draft.assignee)}</div>`:''}${draft.description?'<small>The remaining information will be saved in Description.</small>':''}</div><p class="voice-task-status">${esc(summary)}</p><div class="voice-task-actions"><button type="button" class="action-btn" onclick="renderVoiceTaskModal('Πατήστε το μικρόφωνο και πείτε ξανά την εντολή σας.')">Try again</button><button type="button" class="primary-btn" onclick="confirmVoiceTaskCreation()">Create Task</button></div></div>`;
-  voiceSpeak(summary,()=>{try{startVoiceTaskListening(true)}catch{}})
+  document.getElementById('modalContent').innerHTML=`<div class="voice-task-panel"><p class="eyebrow">CONFIRM VOICE TASK</p><h2 id="modalTitle">Ready to create</h2><div class="voice-summary"><strong>${draft.type==='mini_task'?'Mini Task':'Task'}</strong><div>${esc(draft.title)}</div>${draft.assignee!=='Unassigned'?`<div>Assignee: ${esc(draft.assignee)}</div>`:''}${draft.description?'<small>The remaining information will be saved in Description.</small>':''}</div><p class="voice-task-status">${esc(summary)}</p><div class="voice-task-actions"><button type="button" class="action-btn" onclick="closeVoiceTaskModal()">Cancel</button><button id="voiceFallbackBtn" type="button" class="primary-btn hidden">Απάντηση</button></div></div>`;
+  voiceSpeak(summary,()=>startVoiceTaskListening(true))
+}
+function handleVoiceConfirmation(heard){
+  const normalized=voiceNormalize(heard);
+  if(/^(ναι|οκ|ok|yes|δημιουργησε το|δημιουργησε|προχωρα|προχωρησε)/i.test(normalized)){confirmVoiceTaskCreation();return}
+  if(/^(οχι|no|ακυρο|ακυρωσε)/i.test(normalized)){closeVoiceTaskModal();voiceSpeak('Η δημιουργία ακυρώθηκε.');return}
+  const assigneeMatch=voiceFindAssignee(normalized);
+  if(heard&&assigneeMatch&&voiceDraft){
+    voiceDraft.assignee=assigneeMatch.name;
+    const summary=voiceDraftSummary(voiceDraft),summaryBox=document.querySelector('.voice-summary');
+    if(summaryBox)summaryBox.innerHTML=`<strong>${voiceDraft.type==='mini_task'?'Mini Task':'Task'}</strong><div>${esc(voiceDraft.title)}</div><div>Assignee: ${esc(voiceDraft.assignee)}</div>${voiceDraft.description?'<small>The remaining information will be saved in Description.</small>':''}`;
+    const status=document.querySelector('.voice-task-status');if(status)status.textContent=summary;
+    voiceSpeak(summary,()=>startVoiceTaskListening(true));return
+  }
+  if(heard&&/(?:^|\s)(task|τασκ)(?=\s|$)/i.test(normalized)){prepareVoiceTaskFromText(heard);return}
+  const retry='Δεν κατάλαβα την απάντηση. Πείτε «Ναι», «Όχι» ή πείτε ξανά ολόκληρη την εντολή.';
+  const status=document.querySelector('.voice-task-status');if(status)status.textContent=retry;
+  voiceSpeak(retry,()=>startVoiceTaskListening(true))
 }
 function confirmVoiceTaskCreation(){
   if(!voiceDraft||!isMainAdmin())return;
@@ -918,7 +940,7 @@ initialiseNavigationDrag();
 document.querySelectorAll('.main-nav .nav-item').forEach(button=>{button.onclick=()=>{if(button.dataset.view==='users'){if(state.role!=='admin'){toast('Only Administrators can view Users');return}state.appSection='users';render()}else if(button.dataset.view==='spaces'){if(state.role!=='admin'){toast('Only Administrators can view Spaces');return}state.appSection='spaces';render()}else if(button.dataset.view==='overview'){state.appSection='overview';render()}else if(button.dataset.view==='activity'){if(state.role!=='admin'){toast('Only Administrators can view the Activity Log');return}state.appSection='activity';render()}else if(button.dataset.view==='board'){state.appSection='tasks';state.supervisedFirst=false;render()}}});
 document.getElementById('userPreviewSelect').onchange=event=>previewAsUser(event.target.value);
 document.getElementById('sidebarToggle').onclick=toggleSidebar;
-document.getElementById('searchInput').oninput=e=>{state.query=e.target.value.toLowerCase();render()}; document.getElementById('newTaskBtn').onclick=newTaskModal; document.getElementById('miniTaskBtn').onclick=miniTaskModal; document.getElementById('voiceTaskBtn').onclick=openVoiceTaskModal; document.getElementById('mobileNewTaskBtn').onclick=newTaskModal; document.getElementById('closeModal').onclick=()=>closeModal(); document.getElementById('modalBackdrop').onclick=e=>{if(e.target.id==='modalBackdrop')closeModal()};
+document.getElementById('searchInput').oninput=e=>{state.query=e.target.value.toLowerCase();render()}; document.getElementById('newTaskBtn').onclick=newTaskModal; document.getElementById('miniTaskBtn').onclick=miniTaskModal; document.getElementById('voiceTaskBtn').onclick=openVoiceTaskModal; document.getElementById('mobileNewTaskBtn').onclick=newTaskModal; document.getElementById('closeModal').onclick=()=>document.querySelector('.voice-task-panel')?closeVoiceTaskModal():closeModal(); document.getElementById('modalBackdrop').onclick=e=>{if(e.target.id==='modalBackdrop')document.querySelector('.voice-task-panel')?closeVoiceTaskModal():closeModal()};
 document.getElementById('listTab').onclick=()=>{state.view='list';render()}; document.getElementById('calendarTab').onclick=()=>{state.view='calendar';render()}; document.getElementById('progressLogTab').onclick=()=>{state.view='progressLog';render()};
 document.getElementById('assigneeFilter').onchange=e=>{state.assignee=e.target.value;render()}; document.getElementById('myTasksFilter').onclick=e=>{state.mine=!state.mine;e.currentTarget.classList.toggle('active',state.mine);render()};
 document.getElementById('rollOverdueBtn').onclick=rollOverdueTasksToMonday;
