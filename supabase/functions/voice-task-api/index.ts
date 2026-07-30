@@ -45,7 +45,12 @@ function json(body: unknown, status = 200) {
 }
 
 function normalize(value: unknown) {
-  return String(value ?? "").trim().replace(/\s+/g, " ").toLocaleLowerCase("en");
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLocaleLowerCase("el");
 }
 
 function cleanText(value: unknown, maximum: number) {
@@ -70,7 +75,38 @@ function splitLongTitle(title: string, description: string) {
 }
 
 function resolveProfile(profiles: Profile[], value: unknown) {
-  const wanted = normalize(value);
+  const supplied = normalize(value);
+  const aliases: Record<string, string> = {
+    "αγαπη": "agapi@shd.global",
+    "agapi": "agapi@shd.global",
+    "αλεξανδρος": "alexandros@shd.global",
+    "alexandros": "alexandros@shd.global",
+    "χαρα": "c.giannoula.law@gmail.com",
+    "chara": "c.giannoula.law@gmail.com",
+    "χρηστος": "chris@shd.global",
+    "chris": "chris@shd.global",
+    "ντινος": "dinos@shd.global",
+    "dinos": "dinos@shd.global",
+    "fang": "fang@shd.global",
+    "φωτης": "fotis@shd.global",
+    "fotis": "fotis@shd.global",
+    "γαληνη": "galini@shd.global",
+    "galini": "galini@shd.global",
+    "ιφιγενεια": "ifigenia@shd.global",
+    "ifigenia": "ifigenia@shd.global",
+    "γιαννης": "jtzortzos@shd.global",
+    "γιαννη": "jtzortzos@shd.global",
+    "john": "jtzortzos@shd.global",
+    "σακης": "sakisiliou80@gmail.com",
+    "sakis": "sakisiliou80@gmail.com",
+    "assistant": "info+assistant@shd.global",
+    "βοηθος": "info+assistant@shd.global",
+    "βασιλης": "katsaros@tkcfinance.com",
+    "vasilis": "katsaros@tkcfinance.com",
+    "βικτωρ": "victor@shd.global",
+    "victor": "victor@shd.global",
+  };
+  const wanted = aliases[supplied] ?? supplied;
   if (!wanted || wanted === "unassigned" || wanted === "none") return null;
   const exact = profiles.find((profile) =>
     normalize(profile.full_name) === wanted || normalize(profile.email) === wanted
