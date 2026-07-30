@@ -59,10 +59,10 @@
     return safeLocalSet(TASK_KEY, JSON.stringify((tasks || []).map(taskForLocalCache)));
   }
 
-  function headers(extra = {}) {
+  function headers(extra = {}, accessToken = session()?.access_token || '') {
     return {
       apikey: window.SHG_SUPABASE_KEY,
-      Authorization: `Bearer ${session()?.access_token || ''}`,
+      Authorization: `Bearer ${accessToken}`,
       'Content-Type': 'application/json',
       ...extra,
     };
@@ -72,9 +72,11 @@
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REMOTE_TIMEOUT);
     try {
+      const activeSession = await window.shgEnsureFreshSession?.(60 * 1000) || session();
+      if (!activeSession?.access_token) throw new Error('The shared database connection is temporarily unavailable.');
       const response = await fetch(`${window.SHG_SUPABASE_URL}${path}`, {
         ...options,
-        headers: headers(options.headers),
+        headers: headers(options.headers, activeSession.access_token),
         signal: controller.signal,
       });
       const text = await response.text();

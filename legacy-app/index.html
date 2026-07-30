@@ -143,11 +143,12 @@
       </section>
     </div>
     <script src="bootstrap-data.js"></script>
-    <script src="auth.js?v=222"></script>
-    <script src="remote-sync.js?v=232"></script>
+    <script src="auth.js?v=238"></script>
+    <script src="remote-sync.js?v=238"></script>
     <script>
       (async () => {
         try {
+          await window.shgEnsureFreshSession?.();
           await window.shgPrepareRemoteData?.();
         } catch (error) {
           console.error('Could not load shared SHG data', error);

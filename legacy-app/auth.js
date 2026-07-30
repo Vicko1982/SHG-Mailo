@@ -2,6 +2,8 @@
   const SUPABASE_URL = 'https://ewjalucwaeotamodlajs.supabase.co';
   const SUPABASE_KEY = 'sb_publishable_XeGECEGDBFj1b0z-zyb2kQ_SdlTL2tG';
   const SESSION_KEY = 'shg-supabase-session';
+  const REFRESH_EARLY_MS = 5 * 60 * 1000;
+  const REFRESH_RETRY_MS = 30 * 1000;
   const AUTH_REQUIRED = !['127.0.0.1', 'localhost'].includes(location.hostname) || new URLSearchParams(location.search).get('auth') === '1';
   const USER_NAMES = {
     'agapi@shd.global': 'Agapi Zoannou',
@@ -20,32 +22,116 @@
     'victor@shd.global': 'Victor Stavropoulos',
   };
 
-  function readSession() {
+  function readStoredSession() {
     try {
       const session = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null');
       if (!session?.access_token || !session?.user?.email) return null;
-      if (session.expires_at && session.expires_at * 1000 <= Date.now()) return null;
       return session;
     } catch {
       return null;
     }
   }
 
-  let session = readSession();
+  function sessionIsFresh(value, minimumValidityMs = 0) {
+    if (!value?.access_token) return false;
+    if (!value.expires_at) return true;
+    return value.expires_at * 1000 - Date.now() > minimumValidityMs;
+  }
+
+  function normalizeSession(value, previous = null) {
+    const normalized = { ...(previous || {}), ...(value || {}) };
+    if (!normalized.refresh_token) normalized.refresh_token = previous?.refresh_token || '';
+    if (!normalized.expires_at && normalized.expires_in) {
+      normalized.expires_at = Math.floor(Date.now() / 1000) + Number(normalized.expires_in);
+    }
+    return normalized;
+  }
+
+  let session = readStoredSession();
   let pendingEmail = '';
-  window.SHG_AUTH_USER_EMAIL = session?.user?.email?.toLowerCase() || '';
-  window.SHG_AUTH_USER_NAME = USER_NAMES[window.SHG_AUTH_USER_EMAIL] || '';
+  let refreshPromise = null;
+  let refreshTimer = null;
+
+  function updateAuthIdentity(value) {
+    const email = value?.user?.email?.toLowerCase() || '';
+    window.SHG_AUTH_USER_EMAIL = email;
+    window.SHG_AUTH_USER_NAME = USER_NAMES[email] || '';
+  }
+
+  function storeSession(value) {
+    session = normalizeSession(value, session);
+    localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+    updateAuthIdentity(session);
+    scheduleRefresh();
+    return session;
+  }
+
+  function scheduleRefresh(delayOverride = null) {
+    clearTimeout(refreshTimer);
+    if (!session?.refresh_token) return;
+    const expiresAt = Number(session.expires_at || 0) * 1000;
+    const delay = delayOverride ?? Math.max(1000, expiresAt - Date.now() - REFRESH_EARLY_MS);
+    refreshTimer = setTimeout(() => {
+      ensureFreshSession(REFRESH_EARLY_MS).catch(() => scheduleRefresh(REFRESH_RETRY_MS));
+    }, Math.min(delay, 2147483647));
+  }
+
+  async function performRefresh() {
+    const latest = readStoredSession();
+    if (latest && latest.refresh_token !== session?.refresh_token) session = latest;
+    if (sessionIsFresh(session, REFRESH_EARLY_MS)) {
+      scheduleRefresh();
+      return session;
+    }
+    if (!session?.refresh_token) return null;
+    try {
+      const data = await authRequest('token?grant_type=refresh_token', {
+        refresh_token: session.refresh_token,
+      });
+      return storeSession(data);
+    } catch (error) {
+      scheduleRefresh(REFRESH_RETRY_MS);
+      throw error;
+    }
+  }
+
+  async function ensureFreshSession(minimumValidityMs = REFRESH_EARLY_MS) {
+    const latest = readStoredSession();
+    if (latest && latest.refresh_token !== session?.refresh_token) session = latest;
+    if (sessionIsFresh(session, minimumValidityMs)) {
+      scheduleRefresh();
+      return session;
+    }
+    if (!session?.refresh_token) return null;
+    if (refreshPromise) return refreshPromise;
+    const refresh = async () => {
+      const newest = readStoredSession();
+      if (newest) session = newest;
+      return sessionIsFresh(session, minimumValidityMs) ? session : performRefresh();
+    };
+    refreshPromise = (navigator.locks?.request
+      ? navigator.locks.request('mailo-auth-refresh', refresh)
+      : refresh()
+    ).finally(() => { refreshPromise = null; });
+    return refreshPromise;
+  }
+
+  updateAuthIdentity(session);
   window.SHG_AUTH_REQUIRED = AUTH_REQUIRED;
   window.SHG_SUPABASE_URL = SUPABASE_URL;
   window.SHG_SUPABASE_KEY = SUPABASE_KEY;
-  window.shgGetSupabaseSession = readSession;
+  window.shgGetSupabaseSession = () => session || readStoredSession();
+  window.shgEnsureFreshSession = ensureFreshSession;
   window.SHG_USER_EMAILS = Object.fromEntries(
     Object.entries(USER_NAMES).map(([email, name]) => [name, email]),
   );
 
   window.shgInvokeFunction = async (functionName, payload) => {
-    const accessToken = readSession()?.access_token;
-    if (!accessToken) throw new Error('Sign in is required to send notifications.');
+    const activeSession = await ensureFreshSession(60 * 1000).catch(() => null);
+    const accessToken = activeSession?.access_token;
+    if (!accessToken || !sessionIsFresh(activeSession)) {
+      throw new Error('The connection is temporarily unavailable. Please try again when you are online.');
+    }
     const response = await fetch(`${SUPABASE_URL}/functions/v1/${functionName}`, {
       method: 'POST',
       headers: {
@@ -73,7 +159,11 @@
       body: JSON.stringify(body),
     });
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.msg || data.message || data.error_description || 'Authentication failed.');
+    if (!response.ok) {
+      const error = new Error(data.msg || data.message || data.error_description || 'Authentication failed.');
+      error.status = response.status;
+      throw error;
+    }
     return data;
   }
 
@@ -136,7 +226,7 @@
       setBusy(button, true, 'Verifying…');
       try {
         const data = await authRequest('verify', { email: pendingEmail, token, type: 'email' });
-        localStorage.setItem(SESSION_KEY, JSON.stringify(data));
+        storeSession(data);
         localStorage.setItem('shg-auth-login-email', pendingEmail);
         location.reload();
       } catch (error) {
@@ -172,7 +262,7 @@
   }
 
   window.shgLogout = async () => {
-    const accessToken = readSession()?.access_token;
+    const accessToken = session?.access_token || readStoredSession()?.access_token;
     if (accessToken) {
       fetch(`${SUPABASE_URL}/auth/v1/logout`, {
         method: 'POST',
@@ -185,5 +275,15 @@
     location.reload();
   };
 
+  window.addEventListener('online', () => {
+    ensureFreshSession(REFRESH_EARLY_MS).catch(() => {});
+  });
+  window.addEventListener('storage', event => {
+    if (event.key !== SESSION_KEY) return;
+    session = readStoredSession();
+    updateAuthIdentity(session);
+    scheduleRefresh();
+  });
+  scheduleRefresh();
   document.addEventListener('DOMContentLoaded', initAuth, { once: true });
 })();
