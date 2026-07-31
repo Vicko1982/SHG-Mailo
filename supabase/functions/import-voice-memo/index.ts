@@ -166,6 +166,9 @@ Deno.serve(async (request) => {
             content: `Convert one spoken instruction into one Mailo Task draft.
 Rules:
 - "Task" means task; "Mini Task" means mini_task.
+- Detect the language used in the transcript and write title and description in that same language.
+- Never translate Greek speech into English or English speech into Greek unless the speaker explicitly asks for translation.
+- Preserve the speaker's wording and proper names; only shorten a long instruction into a concise title and move the remaining detail into description.
 - Title is required. Keep it concise (ideally under 90 characters). Put remaining useful detail in description.
 - Default Space is Internal & Miscellaneous. Return null if no Space is explicitly stated.
 - A person's name appearing in the work/title is NOT an Assignee.

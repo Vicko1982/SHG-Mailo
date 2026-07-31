@@ -15,7 +15,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="styles.css?v=246" />
+    <link rel="stylesheet" href="styles.css?v=247" />
   </head>
   <body>
     <div class="app-shell">
@@ -140,7 +140,7 @@
     </div>
     <script src="bootstrap-data.js"></script>
     <script src="auth.js?v=246"></script>
-    <script src="remote-sync.js?v=241"></script>
+    <script src="remote-sync.js?v=247"></script>
     <script>
       (async () => {
         const loadScript = source => new Promise((resolve, reject) => {
@@ -157,16 +157,42 @@
         ];
         const staticDataReady = Promise.all(dataScripts.map(loadScript));
         const remoteDataReady = (async () => {
-          try {
-            await window.shgEnsureFreshSession?.();
-            await window.shgPrepareRemoteData?.();
-          } catch (error) {
-            console.error('Could not load shared SHG data', error);
-            window.SHG_REMOTE_LOAD_ERROR = error;
+          if (!window.SHG_AUTH_REQUIRED) {
+            try {
+              await window.shgEnsureFreshSession?.();
+              await window.shgPrepareRemoteData?.();
+            } catch (error) {
+              console.error('Could not load shared SHG data', error);
+              window.SHG_REMOTE_LOAD_ERROR = error;
+            }
+            return;
           }
+          let lastError = null;
+          for (let attempt = 0; attempt < 3; attempt += 1) {
+            try {
+              await window.shgEnsureFreshSession?.();
+              const result = await window.shgPrepareRemoteData?.();
+              if (result?.remote) return;
+              throw new Error('The shared database did not return current data.');
+            } catch (error) {
+              lastError = error;
+              if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 1200 * (attempt + 1)));
+            }
+          }
+          throw lastError || new Error('The shared database is temporarily unavailable.');
         })();
-        await Promise.all([staticDataReady, remoteDataReady]);
-        await loadScript('app.js?v=246');
+        try {
+          await Promise.all([staticDataReady, remoteDataReady]);
+        } catch (error) {
+          console.error('Could not load current shared SHG data', error);
+          document.querySelector('.app-shell')?.classList.add('hidden');
+          const gate = document.getElementById('authGate');
+          const card = gate?.querySelector('.auth-card');
+          if (card) card.innerHTML = `<div class="auth-brand"><span>S</span><div><strong>Mailo</strong><small>Shared workspace</small></div></div><h1>Connection unavailable</h1><p>Mailo could not load the current shared database. No cached task data will be shown.</p><button type="button" onclick="location.reload()">Try again</button>`;
+          gate?.classList.remove('hidden');
+          return;
+        }
+        await loadScript('app.js?v=247');
         window.SHG_APP_LOADED = true;
         if (window.SHG_REMOTE_LOAD_ERROR && typeof window.toast === 'function') {
           window.toast(`The shared database is temporarily unavailable. Retrying automatically. ${window.SHG_REMOTE_LOAD_ERROR.message || ''}`.trim());
