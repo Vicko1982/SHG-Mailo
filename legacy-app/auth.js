@@ -213,7 +213,7 @@
 
   async function sendOtp(email) {
     const normalized = String(email || '').trim().toLowerCase();
-    if (!USER_NAMES[normalized]) throw new Error('This email is not registered as an SHG Task Manager user.');
+    if (!normalized || !normalized.includes('@')) throw new Error('Enter a valid email address.');
     await authRequest('otp', { email: normalized, create_user: false });
     pendingEmail = normalized;
     document.getElementById('authEmailForm').classList.add('hidden');

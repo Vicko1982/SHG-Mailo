@@ -229,7 +229,7 @@
     } catch {}
 
     const core = await Promise.all([
-      fetchAll('profiles', 'id,full_name,email,initials,is_active,last_login'),
+      fetchAll('profiles', 'id,full_name,email,initials,is_active,last_login,voice_names,aliases'),
       fetchAll('user_roles', 'user_id,role'),
       fetchAll('spaces', 'id,key,name,color,type,owner_id'),
       fetchAll('space_members', 'space_id,user_id'),
@@ -281,6 +281,8 @@
     const tombstonedRemoteTasks = allRemoteTasks.filter(task => deletedTaskKeys.has(task.id));
     const localTasks = allRemoteTasks.filter(task => !deletedTaskKeys.has(task.id));
     const currentProfileName = profileName(session()?.user?.id);
+    if (currentProfileName) window.SHG_AUTH_USER_NAME = currentProfileName;
+    window.SHG_USER_EMAILS = Object.fromEntries(profiles.filter(profile=>profile.full_name&&profile.email).map(profile=>[profile.full_name,profile.email]));
     const remoteTaskKeys = new Set(localTasks.map(task => task.id));
     const pendingByKey = new Map();
     for (const task of rawPendingLocalTasks) {
@@ -328,6 +330,7 @@
     const approverNames = currentApproverName ? [currentApproverName] : [];
 
     window.SHG_REMOTE_BOOTSTRAP = {
+      profiles: profiles.filter(profile => profile.is_active !== false).map(profile => ({id:profile.id,name:profile.full_name,email:profile.email||'',initials:profile.initials||'',voiceNames:profile.voice_names||[],aliases:profile.aliases||[]})),
       tasks: localTasks,
       activity: localActivity,
       sharedSpaces: sharedDefinitions,

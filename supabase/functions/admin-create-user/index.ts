@@ -17,9 +17,11 @@ type Role = "main_admin" | "admin" | "user";
 
 interface Payload {
   email: string;
-  password: string;
+  password?: string;
   full_name: string;
   role: Role;
+  voice_names?: string[];
+  aliases?: string[];
 }
 
 function personalSpaceName(fullName: string): string {
@@ -87,7 +89,7 @@ Deno.serve(async (req) => {
     }
 
     const body = (await req.json()) as Payload;
-    if (!body.email || !body.password || !body.full_name || !body.role) {
+    if (!body.email || !body.full_name || !body.role) {
       return new Response(JSON.stringify({ error: "Missing fields" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -115,7 +117,7 @@ Deno.serve(async (req) => {
 
     const { data: created, error: createErr } = await admin.auth.admin.createUser({
       email: body.email,
-      password: body.password,
+      password: body.password || `${crypto.randomUUID()}Aa1!`,
       email_confirm: true,
       user_metadata: { full_name: body.full_name },
     });
@@ -134,6 +136,8 @@ Deno.serve(async (req) => {
       id: userId,
       full_name: body.full_name,
       email: body.email,
+      voice_names: Array.isArray(body.voice_names) ? body.voice_names : [],
+      aliases: Array.isArray(body.aliases) ? body.aliases : [],
     });
 
     // Every account owns exactly one private personal space. The database

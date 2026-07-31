@@ -28,6 +28,8 @@ type Profile = {
   full_name: string;
   email: string | null;
   is_active: boolean | null;
+  voice_names?: string[];
+  aliases?: string[];
 };
 
 type Space = {
@@ -132,14 +134,16 @@ function resolveProfile(profiles: Profile[], value: unknown) {
   const exact = profiles.find((profile) => {
     const fullName = normalize(profile.full_name);
     const email = normalize(profile.email);
-    return wantedTerms.some((wanted) => fullName === wanted || email === wanted);
+    const dynamicAliases=[...(profile.voice_names??[]),...(profile.aliases??[])].map(normalize);
+    return wantedTerms.some((wanted) => fullName === wanted || email === wanted || dynamicAliases.includes(wanted));
   });
   if (exact) return exact;
   const matches = profiles.filter((profile) => {
     const fullName = normalize(profile.full_name);
     const nameTokens = fullName.split(/\s+/);
+    const dynamicAliases=[...(profile.voice_names??[]),...(profile.aliases??[])].map(normalize);
     return wantedTerms.some((wanted) =>
-      fullName.startsWith(wanted) || nameTokens.includes(wanted) || normalize(profile.email) === wanted
+      fullName.startsWith(wanted) || nameTokens.includes(wanted) || normalize(profile.email) === wanted || dynamicAliases.some(alias=>alias.startsWith(wanted))
     );
   });
   if (matches.length === 1) return matches[0];
@@ -237,9 +241,9 @@ Deno.serve(async (request) => {
       data: spaces,
       error: spacesError,
     }] = await Promise.all([
-      admin.from("profiles").select("id,full_name,email,is_active")
+      admin.from("profiles").select("id,full_name,email,is_active,voice_names,aliases")
         .eq("email", "victor@shd.global").eq("is_active", true).single(),
-      admin.from("profiles").select("id,full_name,email,is_active")
+      admin.from("profiles").select("id,full_name,email,is_active,voice_names,aliases")
         .neq("is_active", false).order("full_name"),
       admin.from("spaces").select("id,key,name,type").order("name"),
     ]);

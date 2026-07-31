@@ -44,14 +44,15 @@ async function digest(file: File) {
   return [...new Uint8Array(hash)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function resolveNamed<T extends { name: string }>(entries: T[], value: unknown) {
+function resolveNamed<T extends { name: string; voiceNames?: string[]; aliases?: string[] }>(entries: T[], value: unknown) {
   const wanted = normalize(value);
   if (!wanted) return null;
-  const exact = entries.find((entry) => normalize(entry.name) === wanted);
-  if (exact) return exact;
+  const names = (entry: T) => [entry.name, ...(entry.voiceNames ?? []), ...(entry.aliases ?? [])].map(normalize).filter(Boolean);
+  const exactMatches = entries.filter((entry) => names(entry).includes(wanted));
+  if (exactMatches.length === 1) return exactMatches[0];
+  if (exactMatches.length > 1) return null;
   const matches = entries.filter((entry) => {
-    const name = normalize(entry.name);
-    return name.startsWith(wanted) || name.split(" ").includes(wanted);
+    return names(entry).some(name => name.startsWith(wanted) || name.split(" ").includes(wanted));
   });
   return matches.length === 1 ? matches[0] : null;
 }
@@ -82,7 +83,7 @@ Deno.serve(async (request) => {
 
     const [{ data: profileRows, error: profilesError }, { data: spaceRows, error: spacesError }] =
       await Promise.all([
-        admin.from("profiles").select("id,full_name,email,is_active").neq("is_active", false).order("full_name"),
+        admin.from("profiles").select("id,full_name,email,is_active,voice_names,aliases").neq("is_active", false).order("full_name"),
         admin.from("spaces").select("id,key,name,type").order("name"),
       ]);
     if (profilesError) throw profilesError;
@@ -91,6 +92,8 @@ Deno.serve(async (request) => {
       id: row.id,
       name: row.full_name,
       email: row.email,
+      voiceNames: row.voice_names ?? [],
+      aliases: row.aliases ?? [],
     }));
     const spaces = (spaceRows ?? []).map((row) => ({
       id: row.id,
@@ -108,7 +111,7 @@ Deno.serve(async (request) => {
       "prompt",
       "Mailo task instruction in Greek or English. Preserve names, dates, Spaces, priorities and labels accurately.",
     );
-    for (const profile of profiles) transcriptionForm.append("keywords[]", profile.name);
+    for (const profile of profiles) for (const name of [profile.name,...profile.voiceNames,...profile.aliases]) transcriptionForm.append("keywords[]", name);
     for (const space of spaces) transcriptionForm.append("keywords[]", space.name);
     const transcriptionResponse = await fetch("https://api.openai.com/v1/audio/transcriptions", {
       method: "POST",
@@ -179,7 +182,7 @@ Rules:
 - Return dueDate as YYYY-MM-DD only when explicitly stated; otherwise null.
 - Do not invent labels.
 Current date: ${new Date().toISOString().slice(0, 10)}
-Users: ${profiles.map((profile) => profile.name).join(", ")}
+Users and voice aliases: ${profiles.map((profile) => `${profile.name} [${[...profile.voiceNames,...profile.aliases].join("; ")}]`).join(", ")}
 Spaces: ${spaces.map((space) => `${space.key}: ${space.name}`).join(", ")}`,
           },
           { role: "user", content: transcript },
