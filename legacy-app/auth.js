@@ -159,6 +159,27 @@
     return data;
   };
 
+  window.shgInvokeFunctionFormData = async (functionName, formData) => {
+    const activeSession = await ensureFreshSession(60 * 1000).catch(() => null);
+    const accessToken = activeSession?.access_token;
+    if (!accessToken || !sessionIsFresh(activeSession)) {
+      throw new Error('The connection is temporarily unavailable. Please try again when you are online.');
+    }
+    const response = await fetch(`${SUPABASE_URL}/functions/v1/${functionName}`, {
+      method: 'POST',
+      headers: {
+        apikey: SUPABASE_KEY,
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: formData,
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.error || data.message || 'The Voice Memo could not be processed.');
+    }
+    return data;
+  };
+
   async function authRequest(path, body) {
     const response = await fetch(`${SUPABASE_URL}/auth/v1/${path}`, {
       method: 'POST',

@@ -12,18 +12,10 @@
     <link id="appManifest" rel="manifest" href="manifest.webmanifest" />
     <link rel="icon" href="icons/app-icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="icons/mailo-logo.jpeg" />
-    <script>
-      (() => {
-        if (new URLSearchParams(location.search).get('voice') !== '1') return;
-        document.title = 'Mailo Voice';
-        document.querySelector('meta[name="apple-mobile-web-app-title"]')?.setAttribute('content', 'Mailo Voice');
-        document.getElementById('appManifest')?.setAttribute('href', 'voice.webmanifest');
-      })();
-    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="styles.css?v=237" />
+    <link rel="stylesheet" href="styles.css?v=246" />
   </head>
   <body>
     <div class="app-shell">
@@ -35,12 +27,10 @@
 
         <button id="newTaskBtn" class="sidebar-new-task" type="button"><span>+</span> New task</button>
         <button id="miniTaskBtn" class="sidebar-new-task sidebar-mini-task" type="button"><span>+</span> Mini Task</button>
-        <button id="voiceTaskBtn" class="sidebar-new-task sidebar-voice-task main-admin-only" type="button">
-          <span aria-hidden="true">●</span> Voice Task
+        <button id="voiceMemoImportBtn" class="sidebar-new-task sidebar-voice-memos main-admin-only" type="button">
+          <span aria-hidden="true">♪</span> Import Voice Memos
         </button>
-        <button id="siriTaskSetupBtn" class="sidebar-new-task sidebar-siri-setup main-admin-only" type="button">
-          <span aria-hidden="true">⌁</span> Siri Setup
-        </button>
+        <input id="voiceMemoFiles" class="hidden" type="file" accept=".m4a,audio/mp4,audio/x-m4a,audio/mpeg,audio/wav,audio/webm" multiple>
 
         <nav class="main-nav" aria-label="Main navigation">
           <button class="nav-item" data-view="board"><span>▦</span> Tasks</button>
@@ -50,7 +40,6 @@
           <button class="nav-item admin-only" data-view="activity"><span>≣</span> Activity Log</button>
         </nav>
 
-        <button class="project-item all-tasks-item active" data-project="all"><i style="--dot:#75829a"></i> All Tasks <span id="allCount">0</span></button>
         <div class="sidebar-section">
           <div id="projectList"></div>
         </div>
@@ -82,28 +71,35 @@
         <section class="content">
           <div id="tasksContent">
           <div class="page-head">
-            <div><p class="eyebrow">WORKSPACE / <span id="projectCrumb">ALL SPACES</span></p><h1>Tasks</h1><p class="subtitle">Organise, assign and track every task.</p></div>
+            <div><h1>Tasks <span id="allCount" class="active-task-count">0</span></h1></div>
             <button id="mobileNewTaskBtn" class="primary-btn mobile-new-task"><span>+</span> New task</button>
           </div>
 
           <div class="toolbar">
-            <div class="view-tabs"><button id="listTab" class="active">List</button><button id="calendarTab">Calendar</button><button id="progressLogTab">In Progress Log</button></div>
-            <div class="filters">
-              <button id="rollOverdueBtn" class="filter-btn admin-only" type="button">Roll Overdue to Monday</button>
-              <label class="filter-btn toggle-filter"><input id="includeDoneFilter" type="checkbox"> Include Done</label>
-              <label class="filter-btn toggle-filter"><input id="unfoldSubtasksFilter" type="checkbox" checked> Unfold Subtasks</label>
-              <label class="filter-btn toggle-filter"><input id="sortSubtasksFilter" type="checkbox"> Sort Subtasks Individually</label>
-              <label class="filter-btn toggle-filter"><input id="viewMiniTasksFilter" type="checkbox"> View Mini Tasks</label>
-              <label class="filter-btn toggle-filter"><input id="viewCancelledFilter" type="checkbox"> View Cancelled</label>
-              <label class="filter-btn toggle-filter"><input id="viewDoneFilter" type="checkbox"> View Done</label>
-              <select id="assigneeFilter" class="filter-btn admin-only" aria-label="Filter by assignee"><option value="all">All assignees</option></select>
-              <button id="myTasksFilter" class="filter-btn">◎ My tasks</button>
+            <div id="taskToolbarFilters" class="filters" aria-label="Task view options">
+              <button id="rollOverdueBtn" class="filter-btn admin-only" data-filter-key="rollOverdue" type="button" draggable="true">Roll Overdue to Monday</button>
+              <label class="filter-btn toggle-filter" data-filter-key="includeDone" draggable="true"><input id="includeDoneFilter" type="checkbox"> Include Done</label>
+              <label class="filter-btn toggle-filter" data-filter-key="unfoldSubtasks" draggable="true"><input id="unfoldSubtasksFilter" type="checkbox"> Unfold Subtasks</label>
+              <label class="filter-btn toggle-filter" data-filter-key="sortSubtasks" draggable="true"><input id="sortSubtasksFilter" type="checkbox"> Sort Subtasks Individually</label>
+              <label class="filter-btn toggle-filter" data-filter-key="viewMiniTasks" draggable="true"><input id="viewMiniTasksFilter" type="checkbox"> View Mini Tasks</label>
+              <label class="filter-btn toggle-filter" data-filter-key="viewCancelled" draggable="true"><input id="viewCancelledFilter" type="checkbox"> View Cancelled</label>
+              <label class="filter-btn toggle-filter" data-filter-key="viewDone" draggable="true"><input id="viewDoneFilter" type="checkbox"> View Done</label>
             </div>
           </div>
 
           <div id="listView" class="list-view" aria-live="polite"></div>
-          <div id="calendarView" class="calendar-view hidden" aria-live="polite"></div>
-          <div id="progressLogView" class="progress-log-view hidden" aria-live="polite"></div>
+          <div id="calendarView" class="hidden" aria-hidden="true"></div>
+          <div id="progressLogView" class="hidden" aria-hidden="true"></div>
+          <div class="hidden" aria-hidden="true">
+            <span id="projectCrumb">ALL SPACES</span>
+            <button id="listTab" type="button"></button>
+            <button id="calendarTab" type="button"></button>
+            <button id="progressLogTab" type="button"></button>
+            <select id="assigneeFilter"><option value="all">All assignees</option></select>
+            <button id="myTasksFilter" type="button"></button>
+            <button id="voiceTaskBtn" type="button"></button>
+            <button id="siriTaskSetupBtn" type="button"></button>
+          </div>
           </div>
           <div id="usersView" class="users-view hidden" aria-live="polite"></div>
           <div id="spacesView" class="users-view hidden" aria-live="polite"></div>
@@ -143,7 +139,7 @@
       </section>
     </div>
     <script src="bootstrap-data.js"></script>
-    <script src="auth.js?v=240"></script>
+    <script src="auth.js?v=246"></script>
     <script src="remote-sync.js?v=241"></script>
     <script>
       (async () => {
@@ -170,7 +166,7 @@
           }
         })();
         await Promise.all([staticDataReady, remoteDataReady]);
-        await loadScript('app.js?v=245');
+        await loadScript('app.js?v=246');
         window.SHG_APP_LOADED = true;
         if (window.SHG_REMOTE_LOAD_ERROR && typeof window.toast === 'function') {
           window.toast(`The shared database is temporarily unavailable. Retrying automatically. ${window.SHG_REMOTE_LOAD_ERROR.message || ''}`.trim());

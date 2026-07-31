@@ -8,3 +8,6 @@ verify_jwt = false
 
 [functions.siri-voice-task]
 verify_jwt = false
+
+[functions.import-voice-memo]
+verify_jwt = false
