@@ -15,7 +15,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="styles.css?v=248" />
+    <link rel="stylesheet" href="styles.css?v=249" />
   </head>
   <body>
     <div class="app-shell">
@@ -63,7 +63,7 @@
             <button class="data-transfer-btn main-admin-only" type="button" onclick="exportApplicationData()">Export Data</button>
             <button class="data-transfer-btn main-admin-only" type="button" onclick="document.getElementById('applicationDataImport').click()">Import Data</button>
             <input id="applicationDataImport" class="hidden" type="file" accept="application/json,.json" onchange="importApplicationData(this)">
-            <label class="user-preview-switcher main-admin-only">View as User
+            <label class="user-preview-switcher main-admin-only" hidden>View as User
               <select id="userPreviewSelect"></select>
             </label>
           </div>
@@ -140,9 +140,8 @@
         <p id="authError" class="auth-error hidden"></p>
       </section>
     </div>
-    <script src="bootstrap-data.js"></script>
-    <script src="auth.js?v=248"></script>
-    <script src="remote-sync.js?v=248"></script>
+    <script src="auth.js?v=249"></script>
+    <script src="remote-sync.js?v=249"></script>
     <script>
       (async () => {
         const loadScript = source => new Promise((resolve, reject) => {
@@ -157,9 +156,11 @@
           'victor-main-filter.js',
           ...Array.from({ length: 16 }, (_, index) => `jira-comments-${String(index + 1).padStart(2, '0')}.js`),
         ];
-        const staticDataReady = Promise.all(dataScripts.map(loadScript));
+        const loadStaticData = () => Promise.all(dataScripts.map(loadScript));
+        let staticDataReady = Promise.resolve();
         const remoteDataReady = (async () => {
           if (!window.SHG_AUTH_REQUIRED) {
+            staticDataReady = loadStaticData();
             try {
               await window.shgEnsureFreshSession?.();
               await window.shgPrepareRemoteData?.();
@@ -175,7 +176,7 @@
             return;
           }
           let lastError = null;
-          for (let attempt = 0; attempt < 3; attempt += 1) {
+          for (let attempt = 0; attempt < 2; attempt += 1) {
             try {
               await window.shgEnsureFreshSession?.();
               const result = await window.shgPrepareRemoteData?.();
@@ -183,7 +184,7 @@
               throw new Error('The shared database did not return current data.');
             } catch (error) {
               lastError = error;
-              if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 1200 * (attempt + 1)));
+              if (attempt < 1) await new Promise(resolve => setTimeout(resolve, 500));
             }
           }
           throw lastError || new Error('The shared database is temporarily unavailable.');
@@ -200,7 +201,7 @@
           return;
         }
         if (window.SHG_WAITING_FOR_LOGIN) return;
-        await loadScript('app.js?v=248');
+        await loadScript('app.js?v=249');
         window.SHG_APP_LOADED = true;
         if (window.SHG_REMOTE_LOAD_ERROR && typeof window.toast === 'function') {
           window.toast(`The shared database is temporarily unavailable. Retrying automatically. ${window.SHG_REMOTE_LOAD_ERROR.message || ''}`.trim());

@@ -57,6 +57,27 @@ function resolveNamed<T extends { name: string; voiceNames?: string[]; aliases?:
   return matches.length === 1 ? matches[0] : null;
 }
 
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function cleanTitleFieldInstructions(
+  value: unknown,
+  assignee: { name: string; voiceNames?: string[]; aliases?: string[] } | null,
+  supervisor: { name: string; voiceNames?: string[]; aliases?: string[] } | null,
+) {
+  let title = String(value ?? "").trim();
+  const controls = "(?:assignee|asaini|ασάινι|ασαϊνι|ανάθεση(?: στον| στην)?|ανάθεσε(?: στον| στην)?|υπεύθυνος(?: είναι| θα είναι)?|supervisor|σούπερβαϊζερ|επόπτης)";
+  for (const profile of [assignee, supervisor].filter(Boolean) as Array<{ name: string; voiceNames?: string[]; aliases?: string[] }>) {
+    const names = [profile.name, ...(profile.voiceNames ?? []), ...(profile.aliases ?? [])]
+      .map(name => name.trim()).filter(Boolean).sort((a, b) => b.length - a.length);
+    if (!names.length) continue;
+    const pattern = new RegExp(`${controls}\\s*[:;,–—-]?\\s*(?:${names.map(escapeRegExp).join("|")})(?=$|\\s|[.,;:!?–—-])`, "giu");
+    title = title.replace(pattern, " ");
+  }
+  return title.replace(/\s+([,.;:!?])/g, "$1").replace(/[\s,;:–—-]+$/g, "").replace(/\s+/g, " ").trim();
+}
+
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   try {
@@ -109,7 +130,7 @@ Deno.serve(async (request) => {
     transcriptionForm.set("languages[]", "en");
     transcriptionForm.set(
       "prompt",
-      "Mailo task instruction in Greek or English. Preserve names, dates, Spaces, priorities and labels accurately.",
+      `Mailo task instruction in Greek or English. Preserve names, dates, Spaces, priorities and labels accurately. Recognized users: ${profiles.map(profile => `${profile.name}: ${[...profile.voiceNames,...profile.aliases].join(", ")}`).join("; ")}`,
     );
     for (const profile of profiles) for (const name of [profile.name,...profile.voiceNames,...profile.aliases]) transcriptionForm.append("keywords[]", name);
     for (const space of spaces) transcriptionForm.append("keywords[]", space.name);
@@ -176,6 +197,8 @@ Rules:
 - Default Space is Internal & Miscellaneous. Return null if no Space is explicitly stated.
 - A person's name appearing in the work/title is NOT an Assignee.
 - Set assignee only when assignment is explicit, for example "Assignee", "assign to", "ανάθεσε", "υπεύθυνος".
+- Treat phonetic forms such as "ασάινι", "ασαϊνι" and "asaini" as the field label Assignee.
+- Field labels and their values (for example "Assignee Chris" or "Supervisor Alexandros") are control instructions. Never copy them into title or description.
 - Set supervisor only when explicitly stated.
 - Mini Tasks require an explicit Assignee, but do not invent one.
 - Default priority is Medium; return null when not explicitly stated.
@@ -204,7 +227,7 @@ Spaces: ${spaces.map((space) => `${space.key}: ${space.name}`).join(", ")}`,
     if (!selectedSpace) throw new Error(`The Space “${extracted.space}” could not be matched.`);
     const assignee = resolveNamed(profiles, extracted.assignee);
     const supervisor = resolveNamed(profiles, extracted.supervisor);
-    const title = String(extracted.title ?? "").trim();
+    const title = cleanTitleFieldInstructions(extracted.title, assignee, supervisor);
     if (!title) throw new Error("The recording did not contain a usable Task title.");
 
     return json({
