@@ -15,7 +15,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="styles.css?v=249" />
+    <link rel="stylesheet" href="styles.css?v=250" />
   </head>
   <body>
     <div class="app-shell">
@@ -50,7 +50,7 @@
         </div>
         <button id="sidebarUserButton" class="sidebar-footer" type="button" aria-haspopup="menu" aria-expanded="false">
           <div id="currentUserAvatar" class="avatar">…</div>
-          <div class="user-meta"><strong id="currentUserName">Loading user…</strong><span id="roleLabel">Loading permissions…</span></div>
+          <div class="user-meta"><strong id="currentUserName">Loading user…</strong><span id="roleLabel">Loading permissions…</span><small class="version-badge">Version 50</small></div>
           <span class="dots" aria-hidden="true">•••</span>
         </button>
       </aside>
@@ -140,8 +140,8 @@
         <p id="authError" class="auth-error hidden"></p>
       </section>
     </div>
-    <script src="auth.js?v=249"></script>
-    <script src="remote-sync.js?v=249"></script>
+    <script src="auth.js?v=250"></script>
+    <script src="remote-sync.js?v=250"></script>
     <script>
       (async () => {
         const loadScript = source => new Promise((resolve, reject) => {
@@ -201,7 +201,7 @@
           return;
         }
         if (window.SHG_WAITING_FOR_LOGIN) return;
-        await loadScript('app.js?v=249');
+        await loadScript('app.js?v=250');
         window.SHG_APP_LOADED = true;
         if (window.SHG_REMOTE_LOAD_ERROR && typeof window.toast === 'function') {
           window.toast(`The shared database is temporarily unavailable. Retrying automatically. ${window.SHG_REMOTE_LOAD_ERROR.message || ''}`.trim());

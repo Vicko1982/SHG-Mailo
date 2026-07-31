@@ -24,21 +24,6 @@ interface Payload {
   aliases?: string[];
 }
 
-function personalSpaceName(fullName: string): string {
-  const parts = fullName.trim().split(/\s+/).filter(Boolean);
-  if (parts.length < 2) return parts[0] ?? "Personal";
-  return `${parts[0]} ${Array.from(parts[parts.length - 1])[0]}`;
-}
-
-function personalSpaceKeyBase(fullName: string): string {
-  const parts = fullName.trim().split(/\s+/).filter(Boolean);
-  const firstInitial = Array.from(parts[0] ?? "P")[0] ?? "P";
-  const lastInitial = parts.length > 1
-    ? (Array.from(parts[parts.length - 1])[0] ?? "")
-    : "";
-  return `${firstInitial}${lastInitial}`.toLocaleUpperCase();
-}
-
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -115,13 +100,23 @@ Deno.serve(async (req) => {
       );
     }
 
-    const { data: created, error: createErr } = await admin.auth.admin.createUser({
+    let { data: created, error: createErr } = await admin.auth.admin.createUser({
       email: body.email,
       password: body.password || `${crypto.randomUUID()}Aa1!`,
       email_confirm: true,
       user_metadata: { full_name: body.full_name },
     });
+    // Synchronization is idempotent: if Auth already knows this email, reuse
+    // that account and repair its profile/role instead of creating a duplicate.
     if (createErr || !created.user) {
+      const { data: existingUsers, error: listError } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
+      if (listError) throw listError;
+      const existing = existingUsers.users.find((user) =>
+        String(user.email || "").toLocaleLowerCase() === body.email.trim().toLocaleLowerCase()
+      );
+      if (existing) created = { user: existing };
+    }
+    if (!created.user) {
       return new Response(
         JSON.stringify({ error: createErr?.message ?? "Create failed" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
@@ -139,37 +134,6 @@ Deno.serve(async (req) => {
       voice_names: Array.isArray(body.voice_names) ? body.voice_names : [],
       aliases: Array.isArray(body.aliases) ? body.aliases : [],
     });
-
-    // Every account owns exactly one private personal space. The database
-    // trigger normally creates it; this fallback also supports deployments
-    // where the Edge Function is updated before the migration is applied.
-    const { data: existingPersonalSpace } = await admin
-      .from("spaces")
-      .select("id")
-      .eq("type", "personal")
-      .eq("owner_id", userId)
-      .maybeSingle();
-    if (!existingPersonalSpace) {
-      const baseKey = personalSpaceKeyBase(body.full_name);
-      const { data: allSpaceKeys, error: keysError } = await admin
-        .from("spaces")
-        .select("key");
-      if (keysError) throw keysError;
-      const usedKeys = new Set((allSpaceKeys ?? []).map((space) => space.key));
-      let starCount = 1;
-      let personalKey = `${baseKey}*`;
-      while (usedKeys.has(personalKey)) {
-        starCount += 1;
-        personalKey = `${baseKey}${"*".repeat(starCount)}`;
-      }
-      const { error: personalSpaceError } = await admin.from("spaces").insert({
-        key: personalKey,
-        name: personalSpaceName(body.full_name),
-        type: "personal",
-        owner_id: userId,
-      });
-      if (personalSpaceError) throw personalSpaceError;
-    }
 
     // Reset roles to the requested one
     await admin.from("user_roles").delete().eq("user_id", userId);

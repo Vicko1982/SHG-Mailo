@@ -237,13 +237,11 @@
     ]);
     const optional = await Promise.allSettled([
       fetchAll('task_comments', 'id,task_id,author_id,content,created_at,updated_at,legacy_data'),
-      fetchAll('activity_log', 'id,user_id,action,task_id,task_title,metadata,created_at,legacy_data,task:tasks(task_key)'),
       fetchAll('app_settings', 'current_approver_id', 'id=eq.true'),
     ]);
     const [profiles, roles, spaces, members, tasks] = core;
     const comments = optional[0].status === 'fulfilled' ? optional[0].value : [];
-    const activity = optional[1].status === 'fulfilled' ? optional[1].value : [];
-    const settings = optional[2].status === 'fulfilled' ? optional[2].value : [];
+    const settings = optional[1].status === 'fulfilled' ? optional[1].value : [];
     for (const result of optional) {
       if (result.status === 'rejected') console.warn('Optional shared data unavailable', result.reason);
     }
@@ -323,7 +321,7 @@
       .filter(row => row.role === 'admin' || row.role === 'main_admin')
       .map(row => profileName(row.user_id))
       .filter(Boolean);
-    const localActivity = activity.map(activityFromRow);
+    const localActivity = [];
     const currentApproverName = profileName(settings[0]?.current_approver_id) ||
       [...new Set(localTasks.map(task => task.approver).filter(Boolean))][0] ||
       '';
@@ -352,6 +350,17 @@
     window.dispatchEvent(new CustomEvent('shg:remote-ready', {
       detail: { tasks: localTasks.length, comments: comments.length, spaces: spaces.length },
     }));
+    // The activity history is not needed to paint the task workspace. Load it
+    // after the interactive shell is ready, then hydrate the Activity tab.
+    fetchAll('activity_log', 'id,user_id,action,task_id,task_title,metadata,created_at,legacy_data,task:tasks(task_key)')
+      .then(rows => {
+        const deferredActivity = rows.map(activityFromRow);
+        window.SHG_REMOTE_BOOTSTRAP.activity = deferredActivity;
+        safeLocalSet(ACTIVITY_KEY, JSON.stringify(deferredActivity));
+        cache.activityIds = new Set(deferredActivity.map(entry => entry.id));
+        window.dispatchEvent(new CustomEvent('shg:activity-ready', { detail: deferredActivity }));
+      })
+      .catch(error => console.warn('Activity history unavailable', error));
     if (pendingLocalTasks.length || tombstonedRemoteTasks.length) {
       setTimeout(() => syncTasks(localTasks, localActivity), 0);
     }
