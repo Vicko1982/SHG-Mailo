@@ -4,6 +4,8 @@
   const SESSION_KEY = 'shg-supabase-session';
   const REFRESH_EARLY_MS = 5 * 60 * 1000;
   const REFRESH_RETRY_MS = 30 * 1000;
+  const AUTH_REQUEST_TIMEOUT_MS = 15000;
+  const AUTH_REFRESH_TIMEOUT_MS = 20000;
   const AUTH_REQUIRED = !['127.0.0.1', 'localhost'].includes(location.hostname) || new URLSearchParams(location.search).get('auth') === '1';
   const USER_NAMES = {
     'agapi@shd.global': 'Agapi Zoannou',
@@ -51,6 +53,14 @@
   let pendingEmail = '';
   let refreshPromise = null;
   let refreshTimer = null;
+
+  function withTimeout(promise, timeoutMs, message) {
+    let timer;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+    });
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+  }
 
   function updateAuthIdentity(value) {
     const email = value?.user?.email?.toLowerCase() || '';
@@ -120,9 +130,13 @@
       if (newest) session = newest;
       return sessionIsFresh(session, minimumValidityMs) ? session : performRefresh();
     };
-    refreshPromise = (navigator.locks?.request
+    const refreshOperation = navigator.locks?.request
       ? navigator.locks.request('mailo-auth-refresh', refresh)
       : refresh()
+    refreshPromise = withTimeout(
+      refreshOperation,
+      AUTH_REFRESH_TIMEOUT_MS,
+      'The login session refresh timed out. Please try again.',
     ).finally(() => { refreshPromise = null; });
     return refreshPromise;
   }
@@ -181,22 +195,34 @@
   };
 
   async function authRequest(path, body) {
-    const response = await fetch(`${SUPABASE_URL}/auth/v1/${path}`, {
-      method: 'POST',
-      headers: {
-        apikey: SUPABASE_KEY,
-        Authorization: `Bearer ${SUPABASE_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const error = new Error(data.msg || data.message || data.error_description || 'Authentication failed.');
-      error.status = response.status;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), AUTH_REQUEST_TIMEOUT_MS);
+    try {
+      const response = await fetch(`${SUPABASE_URL}/auth/v1/${path}`, {
+        method: 'POST',
+        headers: {
+          apikey: SUPABASE_KEY,
+          Authorization: `Bearer ${SUPABASE_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const error = new Error(data.msg || data.message || data.error_description || 'Authentication failed.');
+        error.status = response.status;
+        throw error;
+      }
+      return data;
+    } catch (error) {
+      if (error?.name === 'AbortError') {
+        throw new Error('The authentication service did not respond in time. Please try again.');
+      }
       throw error;
+    } finally {
+      clearTimeout(timeout);
     }
-    return data;
   }
 
   function showError(message = '') {
