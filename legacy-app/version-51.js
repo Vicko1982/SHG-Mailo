@@ -65,7 +65,7 @@
   const baseListRowHTML = listRowHTML;
   listRowHTML = function version51ListRowHTML(row) {
     let html = baseListRowHTML(row);
-    if (isMain() && isColumnVisible('lastChecked')) {
+    if (false && isMain() && isColumnVisible('lastChecked')) {
       const task = state.tasks.find(item => item.id === row.id);
       const value = lastCheckFor(task);
       html = html.replace('</tr>', `<td>${value ? formatDateTime(value) : '<span class="none-value">Never checked</span>'}</td></tr>`);

@@ -339,6 +339,7 @@
       spaceAccess: access,
       adminNames,
       mainAdminNames,
+      roleByName: Object.fromEntries(roles.map(row => [profileName(row.user_id), row.role]).filter(([name]) => Boolean(name))),
       approverNames,
       currentApproverName,
     };

@@ -15,7 +15,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="styles.css?v=250" />
+    <link rel="stylesheet" href="styles.css?v=252" />
   </head>
   <body>
     <div class="app-shell">
@@ -27,10 +27,10 @@
 
         <button id="newTaskBtn" class="sidebar-new-task" type="button"><span>+</span> New task</button>
         <button id="miniTaskBtn" class="sidebar-new-task sidebar-mini-task" type="button"><span>+</span> Mini Task</button>
-        <button id="voiceMemoImportBtn" class="sidebar-new-task sidebar-voice-memos main-admin-only" type="button">
+        <button id="voiceMemoImportBtn" class="sidebar-new-task sidebar-voice-memos" type="button">
           <span aria-hidden="true">♪</span> Import Voice Memos
         </button>
-        <a class="sidebar-new-task sidebar-voice-memos main-admin-only" href="record-task.html"><span aria-hidden="true">●</span> Voice Recorder</a>
+        <a class="sidebar-new-task sidebar-voice-memos" href="record-task.html"><span aria-hidden="true">●</span> Voice Recorder</a>
         <input id="voiceMemoFiles" class="hidden" type="file" accept=".m4a,audio/mp4,audio/x-m4a,audio/mpeg,audio/wav,audio/webm" multiple>
 
         <nav class="main-nav" aria-label="Main navigation">
@@ -50,7 +50,7 @@
         </div>
         <button id="sidebarUserButton" class="sidebar-footer" type="button" aria-haspopup="menu" aria-expanded="false">
           <div id="currentUserAvatar" class="avatar">…</div>
-          <div class="user-meta"><strong id="currentUserName">Loading user…</strong><span id="roleLabel">Loading permissions…</span><small class="version-badge">Version 51</small></div>
+          <div class="user-meta"><strong id="currentUserName">Loading user…</strong><span id="roleLabel">Loading permissions…</span><small class="version-badge">Version 52</small></div>
           <span class="dots" aria-hidden="true">•••</span>
         </button>
       </aside>
@@ -201,8 +201,9 @@
           return;
         }
         if (window.SHG_WAITING_FOR_LOGIN) return;
-        await loadScript('app.js?v=251');
+        await loadScript('app.js?v=252');
         await loadScript('version-51.js?v=51');
+        await loadScript('version-52.js?v=52');
         window.SHG_APP_LOADED = true;
         if (window.SHG_REMOTE_LOAD_ERROR && typeof window.toast === 'function') {
           window.toast(`The shared database is temporarily unavailable. Retrying automatically. ${window.SHG_REMOTE_LOAD_ERROR.message || ''}`.trim());
