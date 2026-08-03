@@ -321,6 +321,10 @@
       .filter(row => row.role === 'admin' || row.role === 'main_admin')
       .map(row => profileName(row.user_id))
       .filter(Boolean);
+    const mainAdminNames = roles
+      .filter(row => row.role === 'main_admin')
+      .map(row => profileName(row.user_id))
+      .filter(Boolean);
     const localActivity = [];
     const currentApproverName = profileName(settings[0]?.current_approver_id) ||
       [...new Set(localTasks.map(task => task.approver).filter(Boolean))][0] ||
@@ -334,6 +338,7 @@
       sharedSpaces: sharedDefinitions,
       spaceAccess: access,
       adminNames,
+      mainAdminNames,
       approverNames,
       currentApproverName,
     };

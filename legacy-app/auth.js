@@ -303,7 +303,10 @@
     }
     localStorage.removeItem(SESSION_KEY);
     localStorage.removeItem('shg-auth-login-email');
+    localStorage.removeItem('shg-last-workspace-state');
     sessionStorage.removeItem('shg.impersonate');
+    window.SHG_AUTH_USER_EMAIL = '';
+    window.SHG_AUTH_USER_NAME = '';
     location.reload();
   };
 

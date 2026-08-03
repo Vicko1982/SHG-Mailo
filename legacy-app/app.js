@@ -39,7 +39,7 @@ for(const profile of window.SHG_REMOTE_BOOTSTRAP?.profiles||[]){const existing=P
 function sortedPeople(){return [...PEOPLE].sort((a,b)=>a.name.localeCompare(b.name,'en',{sensitivity:'base'}))}
 
 const FLOW = {backlog:['todo','cancelled'],todo:['progress','backlog','cancelled'],progress:['pause','blocked','review','backlog','cancelled'],pause:['progress','cancelled'],blocked:['progress','backlog','cancelled'],review:['progress','done','backlog','cancelled'],done:['backlog'],cancelled:['backlog']};
-const LIST_COLUMNS = [{key:'code',label:'Code'},{key:'work',label:'Work'},{key:'creator',label:'Creator'},{key:'space',label:'Space'},{key:'labels',label:'Labels'},{key:'assignee',label:'Assignee'},{key:'supervisor',label:'Supervisor'},{key:'approver',label:'Approver'},{key:'priority',label:'Priority'},{key:'dueDate',label:'Due date'},{key:'status',label:'Status'},{key:'updated',label:'Updated'}];
+const LIST_COLUMNS = [{key:'code',label:'Code'},{key:'work',label:'Work'},{key:'creator',label:'Creator'},{key:'space',label:'Space'},{key:'labels',label:'Labels'},{key:'assignee',label:'Assignee'},{key:'supervisor',label:'Supervisor'},{key:'approver',label:'Approver'},{key:'priority',label:'Priority'},{key:'dueDate',label:'Due date'},{key:'status',label:'Status'},{key:'updated',label:'Updated'},{key:'lastChecked',label:'Last Checked'}];
 const MAIN_ADMIN = 'Victor Stavropoulos';
 const SESSION_USER = window.SHG_AUTH_USER_NAME || MAIN_ADMIN;
 let CURRENT_USER = SESSION_USER;
@@ -108,6 +108,10 @@ function loadLastWorkspaceState(){try{const saved=JSON.parse(localStorage.getIte
 function saveLastWorkspaceState(){const list=document.querySelector('#listView .table-scroll'),activity=document.querySelector('.activity-log-scroll'),users=document.querySelector('#usersView .managed-table-scroll');if(list){lastWorkspacePosition.listTop=list.scrollTop;lastWorkspacePosition.listLeft=list.scrollLeft}if(activity)lastWorkspacePosition.activityTop=activity.scrollTop;if(users)lastWorkspacePosition.usersTop=users.scrollTop;lastWorkspacePosition.pageTop=window.scrollY;localStorage.setItem('shg-last-workspace-state',JSON.stringify({currentUser:CURRENT_USER,appSection:state.appSection,view:state.view,project:state.project,activityPage:state.activityPage,query:state.query,mine:state.mine,assignee:state.assignee,includeDone:state.includeDone,quickStatusView:state.quickStatusView,calendarDate:state.calendarDate?.toISOString(),position:lastWorkspacePosition}))}
 function restoreLastWorkspacePosition(){requestAnimationFrame(()=>{window.scrollTo(0,Number(lastWorkspacePosition.pageTop)||0);const activity=document.querySelector('.activity-log-scroll'),users=document.querySelector('#usersView .managed-table-scroll');if(activity)activity.scrollTop=Number(lastWorkspacePosition.activityTop)||0;if(users)users.scrollTop=Number(lastWorkspacePosition.usersTop)||0})}
 loadLastWorkspaceState();
+// A preview identity is session-scoped and must never replace the authenticated user
+// after login or refresh.
+CURRENT_USER=SESSION_USER;
+state.role=state.admins.has(CURRENT_USER)?'admin':'user';
 var activityAuditHeads=new Map(state.tasks.map(task=>[task.id,task.audit?.[0]||'']));
 function migrateDeletedTaskTombstonesToRemote(){
   if(!isMainAdmin()||!state.deletedTaskIds.size)return;

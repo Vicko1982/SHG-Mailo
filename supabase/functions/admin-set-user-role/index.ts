@@ -54,9 +54,7 @@ Deno.serve(async (req) => {
       .from("user_roles")
       .select("role")
       .eq("user_id", u.user.id);
-    const canManageRoles = !!roles?.some(
-      (r) => r.role === "main_admin" || r.role === "admin",
-    );
+    const canManageRoles = !!roles?.some((r) => r.role === "main_admin");
     if (!canManageRoles) {
       return new Response(
         JSON.stringify({ error: "Forbidden: administrator role required" }),
@@ -65,7 +63,7 @@ Deno.serve(async (req) => {
     }
 
     const body = (await req.json()) as Payload;
-    if (!body.user_id || !["admin", "user"].includes(body.role)) {
+    if (!body.user_id || !["main_admin", "admin", "user"].includes(body.role)) {
       return new Response(JSON.stringify({ error: "Invalid payload" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -83,9 +81,10 @@ Deno.serve(async (req) => {
       .from("user_roles")
       .select("role")
       .eq("user_id", body.user_id);
-    if (targetRoles?.some((r) => r.role === "main_admin")) {
+    const { data: targetProfile } = await admin.from("profiles").select("email").eq("id", body.user_id).single();
+    if (String(targetProfile?.email || "").toLowerCase() === "victor@shd.global" && body.role !== "main_admin") {
       return new Response(
-        JSON.stringify({ error: "The Main Admin role is permanent and cannot be changed" }),
+        JSON.stringify({ error: "Victor Stavropoulos must always remain a Main Admin" }),
         { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }

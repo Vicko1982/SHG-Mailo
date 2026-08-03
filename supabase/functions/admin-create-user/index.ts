@@ -3,7 +3,7 @@
 //  - No admin/main_admin exists yet (bootstrap → first user becomes main_admin), OR
 //  - The caller is authenticated and has the 'admin' or 'main_admin' role.
 // Admin and main_admin can create users and admins.
-// A second main_admin can never be created.
+// Existing Main Admins may create additional Main Admins. Victor remains permanent.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
 const corsHeaders = {
@@ -87,15 +87,14 @@ Deno.serve(async (req) => {
       });
     }
 
-    // The bootstrap account is the permanent Main Admin. Afterwards, both
-    // administrators and the Main Admin may create admins, but never another
-    // Main Admin.
+    // The bootstrap account is the permanent Main Admin. Afterwards only an
+    // existing Main Admin may create another Main Admin.
     let finalRole: Role = body.role;
     if (isBootstrap) {
       finalRole = "main_admin";
-    } else if (body.role === "main_admin") {
+    } else if (body.role === "main_admin" && callerRole !== "main_admin") {
       return new Response(
-        JSON.stringify({ error: "A Main Admin already exists and cannot be replaced" }),
+        JSON.stringify({ error: "Only a Main Admin can create another Main Admin" }),
         { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }

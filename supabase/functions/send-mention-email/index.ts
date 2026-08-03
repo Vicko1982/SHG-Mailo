@@ -14,7 +14,7 @@ const RETRY_MINUTES = [5, 15, 30, 60];
 
 type Payload = {
   processQueue?: boolean;
-  notificationType?: "mention" | "comment" | "task_created";
+  notificationType?: "mention" | "comment" | "task_created" | "task_change";
   taskId?: string;
   commentId?: string;
   taskKey?: string;
@@ -138,6 +138,30 @@ function mailContent(job: QueueJob) {
       </div>`;
     return { subject, text, html };
   }
+  if (job.notification_type === "task_change") {
+    const subject = `Task updated: ${job.task_key}`;
+    const text = [
+      `${job.author_name} updated a task for which you are ${roleText}.`,
+      "",
+      `Task: ${job.task_key} — ${job.task_title}`,
+      `Change: ${job.comment_text}`,
+      "",
+      `Open task: ${job.task_url}`,
+    ].join("\n");
+    const html = `
+      <div style="font-family:Arial,sans-serif;color:#172033;line-height:1.55;max-width:640px">
+        <h2 style="margin:0 0 18px">A task was updated</h2>
+        <p><strong>${escapeHtml(job.author_name)}</strong> updated a task for which you are <strong>${escapeHtml(roleText)}</strong>.</p>
+        <div style="padding:16px;border:1px solid #dfe5ee;border-radius:10px;background:#f8fafc">
+          <div style="font-size:12px;color:#667085;margin-bottom:5px">${escapeHtml(job.task_key)}</div>
+          <div style="font-size:18px;font-weight:700">${escapeHtml(job.task_title)}</div>
+        </div>
+        <p style="margin:18px 0 6px;font-weight:700">Change</p>
+        <div style="padding:14px 16px;border-left:4px solid #316ff6;background:#f4f7ff;white-space:pre-wrap">${escapeHtml(job.comment_text)}</div>
+        <p style="margin:22px 0"><a href="${escapeHtml(job.task_url)}" style="display:inline-block;padding:11px 18px;border-radius:8px;background:#316ff6;color:white;text-decoration:none;font-weight:700">Open Task</a></p>
+      </div>`;
+    return { subject, text, html };
+  }
   const subject = `${job.author_name} mentioned you in ${job.task_key}`;
   const text = [
     `${job.author_name} mentioned you in a comment.`,
@@ -246,6 +270,8 @@ Deno.serve(async (request) => {
       ? "task_created"
       : payload.notificationType === "comment"
       ? "comment"
+      : payload.notificationType === "task_change"
+      ? "task_change"
       : "mention";
 
     // The public cron wake-up can only process rows that already exist in the
