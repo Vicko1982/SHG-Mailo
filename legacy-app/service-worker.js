@@ -1,4 +1,4 @@
-const CACHE = 'shg-task-manager-v252';
+const CACHE = 'shg-task-manager-v253';
 const COMMENT_ASSETS = Array.from({length:16},(_,index)=>`./jira-comments-${String(index+1).padStart(2,'0')}.js`);
 const ASSETS = ['./','./index.html','./styles.css','./jira-tasks.js','./victor-main-filter.js','./app.js','./manifest.webmanifest','./icons/app-icon.svg','./icons/mailo-logo.jpeg',...COMMENT_ASSETS];
 

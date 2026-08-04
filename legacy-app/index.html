@@ -15,7 +15,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="styles.css?v=252" />
+    <link rel="stylesheet" href="styles.css?v=253" />
   </head>
   <body>
     <div class="app-shell">
@@ -35,6 +35,7 @@
 
         <nav class="main-nav" aria-label="Main navigation">
           <button class="nav-item" data-view="board"><span>▦</span> Tasks</button>
+          <button class="nav-item" data-view="chat"><span>◌</span> Task Chat <b id="chatUnreadBadge" class="nav-unread-badge hidden">0</b></button>
           <button class="nav-item active" data-view="overview"><span>⌂</span> Overview</button>
           <button class="nav-item admin-only" data-view="users"><span>♟</span> Users</button>
           <button class="nav-item admin-only" data-view="spaces"><span>◆</span> Spaces</button>
@@ -50,7 +51,7 @@
         </div>
         <button id="sidebarUserButton" class="sidebar-footer" type="button" aria-haspopup="menu" aria-expanded="false">
           <div id="currentUserAvatar" class="avatar">…</div>
-          <div class="user-meta"><strong id="currentUserName">Loading user…</strong><span id="roleLabel">Loading permissions…</span><small class="version-badge">Version 52</small></div>
+          <div class="user-meta"><strong id="currentUserName">Loading user…</strong><span id="roleLabel">Loading permissions…</span><small class="version-badge">Version 53</small></div>
           <span class="dots" aria-hidden="true">•••</span>
         </button>
       </aside>
@@ -103,6 +104,7 @@
             <button id="siriTaskSetupBtn" type="button"></button>
           </div>
           </div>
+          <div id="chatView" class="chat-view hidden" aria-live="polite"></div>
           <div id="usersView" class="users-view hidden" aria-live="polite"></div>
           <div id="spacesView" class="users-view hidden" aria-live="polite"></div>
           <div id="overviewView" class="overview-view hidden" aria-live="polite"></div>
@@ -204,6 +206,7 @@
         await loadScript('app.js?v=252');
         await loadScript('version-51.js?v=51');
         await loadScript('version-52.js?v=52');
+        await loadScript('version-53.js?v=53');
         window.SHG_APP_LOADED = true;
         if (window.SHG_REMOTE_LOAD_ERROR && typeof window.toast === 'function') {
           window.toast(`The shared database is temporarily unavailable. Retrying automatically. ${window.SHG_REMOTE_LOAD_ERROR.message || ''}`.trim());

@@ -485,24 +485,8 @@
         comment._supabaseId = id;
         cache.comments.set(id, { id, task_id: taskId, localId: comment.id });
         cache.commentHashes.set(id, commentHash(comment));
-        if (
-          !comment.system &&
-          !comment.automationType &&
-          typeof window.shgInvokeFunction === 'function'
-        ) {
-          try {
-            await window.shgInvokeFunction('send-mention-email', {
-              notificationType: 'comment',
-              taskId,
-              commentId: id,
-            });
-          } catch (notificationError) {
-            console.warn(
-              `Comment ${id} was saved, but its email delivery was deferred`,
-              notificationError,
-            );
-          }
-        }
+        // Version 53: comments and @mentions use Task Chat/browser
+        // notifications. Email remains reserved for critical workflows.
       }
     }
   }
