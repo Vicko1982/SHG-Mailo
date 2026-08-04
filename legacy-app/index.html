@@ -51,7 +51,7 @@
         </div>
         <button id="sidebarUserButton" class="sidebar-footer" type="button" aria-haspopup="menu" aria-expanded="false">
           <div id="currentUserAvatar" class="avatar">…</div>
-          <div class="user-meta"><strong id="currentUserName">Loading user…</strong><span id="roleLabel">Loading permissions…</span><small class="version-badge">Version 58</small></div>
+          <div class="user-meta"><strong id="currentUserName">Loading user…</strong><span id="roleLabel">Loading permissions…</span><small class="version-badge">Version 59</small></div>
           <span class="dots" aria-hidden="true">•••</span>
         </button>
       </aside>
@@ -213,6 +213,7 @@
         await loadScript('version-56.js?v=56');
         await loadScript('version-57.js?v=57');
         await loadScript('version-58.js?v=58');
+        await loadScript('version-59.js?v=59');
         window.SHG_APP_LOADED = true;
         if (window.SHG_REMOTE_LOAD_ERROR && typeof window.toast === 'function') {
           window.toast(`The shared database is temporarily unavailable. Retrying automatically. ${window.SHG_REMOTE_LOAD_ERROR.message || ''}`.trim());
