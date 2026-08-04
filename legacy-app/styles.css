@@ -186,6 +186,7 @@ main{grid-column:2;min-width:0}.topbar{height:70px;background:white;border-botto
 .task-chat-compose-row{display:flex;align-items:flex-end;gap:10px}
 .task-chat-attach{display:grid;flex:0 0 42px;width:42px;height:42px;place-items:center;border:1px solid #cfd9e8;border-radius:999px;background:#fff;color:#1764d8;font-size:25px;cursor:pointer}.task-chat-attach input{display:none}
 .task-chat-compose-reply,.task-chat-pending-files{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 8px;padding:8px 11px;border-radius:9px;background:#edf4ff;color:#4c617f;font-size:12px}.task-chat-compose-reply button{border:0;background:transparent;color:#56719a;font-size:19px}.task-chat-pending-files{justify-content:flex-start;overflow-x:auto}.task-chat-pending-files span{white-space:nowrap}
+.task-chat-delivery{display:flex;justify-content:flex-end;align-items:center;gap:6px;margin-top:4px;color:#8795a8;font-size:10px}.task-chat-delivery.failed{color:#c2414f}.task-chat-delivery button{border:0;background:transparent;color:#2f68d8;font:700 10px DM Sans;cursor:pointer;padding:0}.task-chat-delivery button:hover{text-decoration:underline}
 .mobile-bottom-nav button.active{color:#1764d8}
 
 @media(max-width:850px){

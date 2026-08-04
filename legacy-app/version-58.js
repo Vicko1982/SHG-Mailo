@@ -82,6 +82,7 @@
 
   const commentKey58 = comment => String(comment.id || `${comment.author || ''}|${comment.createdAt || ''}|${comment.text || ''}`);
   async function refreshTaskChat58() {
+    if (window.SHG_USE_REALTIME_CHAT60) return;
     if (refreshingChat58 || state.appSection !== 'chat' || document.visibilityState !== 'visible' || (typeof window.shgFetchRemoteComments !== 'function' && typeof window.shgPrepareRemoteData !== 'function')) return;
     refreshingChat58 = true;
     try {
@@ -125,7 +126,7 @@
   }
 
   window.refreshTaskChat58 = refreshTaskChat58;
-  setInterval(refreshTaskChat58, 8000);
+  window.SHG_TASK_CHAT_POLL58 = setInterval(refreshTaskChat58, 8000);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refreshTaskChat58(); });
   setTimeout(refreshTaskChat58, 2500);
 

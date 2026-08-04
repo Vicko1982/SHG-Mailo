@@ -33,6 +33,11 @@ async function copyDirectory(source, destination) {
 }
 
 await copyDirectory(sourceDir, publicDir);
+await mkdir(join(publicDir, "vendor"), { recursive: true });
+await copyFile(
+  join(root, "node_modules", "@supabase", "supabase-js", "dist", "umd", "supabase.js"),
+  join(publicDir, "vendor", "supabase.js"),
+);
 
 const state = JSON.parse(await readFile(initialStateFile, "utf8"));
 const savedData = { ...(state.data ?? {}) };

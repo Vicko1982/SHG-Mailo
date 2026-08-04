@@ -160,6 +160,7 @@
     const count = state.tasks.filter(task => !isTaskDeleted(task) && canCurrentUserAccessTask(task) && participant55(task)).reduce((total, task) => total + unread55(task), 0), badge = document.getElementById('chatUnreadBadge');
     if (!badge) return; badge.textContent = String(count); badge.title = `${count} unread message${count === 1 ? '' : 's'}`; badge.classList.toggle('hidden', count === 0);
   }
+  window.refreshUnreadBadge55 = refreshUnreadBadge55;
   function messageAssets55(comment) {
     const images = (comment.images || []).map(source => `<a class="task-chat-image" href="${source}" target="_blank" rel="noopener"><img src="${source}" alt="Comment attachment"></a>`).join('');
     const files = (comment.attachments || []).map(file => `<a class="task-chat-file" href="${file.data}" download="${esc(file.name)}">📎 ${esc(file.name)}</a>`).join('');
@@ -169,7 +170,10 @@
   function messageHTML55(comment) {
     if (comment.system) return `<div class="task-chat-system"><span>${esc(comment.text || '')}</span><time>${formatDateTime(comment.createdAt)}</time></div>`;
     const reply = comment.replyTo ? `<div class="task-chat-quote"><strong>${esc(comment.replyTo.author)}</strong><span>${esc(comment.replyTo.text || '')}</span></div>` : '';
-    return `<article class="task-chat-message ${comment.author === CURRENT_USER ? 'mine' : ''}"><div class="task-chat-avatar">${initials(comment.author || 'User')}</div><div class="task-chat-message-body"><header><strong>${esc(comment.author || 'User')}</strong><time>${formatDateTime(comment.createdAt)}</time><button type="button" class="task-chat-reply" onclick="replyInTaskChat('${comment.id}')">Reply</button></header><div class="task-chat-bubble">${reply}${comment.text ? `<p>${esc(comment.text)}</p>` : ''}${messageAssets55(comment)}</div></div></article>`;
+    const delivery = comment.author === CURRENT_USER && comment.deliveryStatus
+      ? `<small class="task-chat-delivery ${comment.deliveryStatus}">${comment.deliveryStatus === 'sending' ? 'Sending…' : comment.deliveryStatus === 'failed' ? `Not sent <button type="button" onclick="retryTaskChatMessage55('${comment.id}')">Retry</button>` : 'Sent'}</small>`
+      : '';
+    return `<article class="task-chat-message ${comment.author === CURRENT_USER ? 'mine' : ''}"><div class="task-chat-avatar">${initials(comment.author || 'User')}</div><div class="task-chat-message-body"><header><strong>${esc(comment.author || 'User')}</strong><time>${formatDateTime(comment.createdAt)}</time><button type="button" class="task-chat-reply" onclick="replyInTaskChat('${comment.id}')">Reply</button></header><div class="task-chat-bubble">${reply}${comment.text ? `<p>${esc(comment.text)}</p>` : ''}${messageAssets55(comment)}</div>${delivery}</div></article>`;
   }
   function listHTML55(tasks) {
     return `<aside class="task-chat-list"><div class="task-chat-list-head"><div><p class="eyebrow">MAILO</p><h1>Task Chat</h1></div><div class="task-chat-head-actions"><button type="button" class="chat-filter-toggle ${showDoneChats ? 'active' : ''}" onclick="toggleDoneChats55()">Show Done</button><button type="button" class="chat-filter-toggle ${unreadOnlyChats ? 'active' : ''}" onclick="toggleUnreadChats55()">Unread</button><button type="button" class="chat-notification-button" onclick="enableTaskChatNotifications()" title="Enable notifications">◉</button></div></div><label class="task-chat-search">⌕<input value="${esc(window.MAILO_CHAT_QUERY || '')}" placeholder="Search Task Chats…" oninput="MAILO_CHAT_QUERY=this.value;renderTaskChat()"></label><div class="task-chat-threads">${tasks.length ? tasks.map(task => { const count = unread55(task), last = latestChatComment55(task); return `<button type="button" class="task-chat-thread ${window.MAILO_ACTIVE_CHAT === task.id ? 'active' : ''}" onclick="openTaskChat('${task.id}')"><span class="task-chat-thread-code">${esc(task.id)}</span><strong>${esc(task.title)}</strong><small>${last ? `${esc(last.author || 'System')}: ${esc(last.text || (last.audioMessage ? 'Voice message' : 'Attachment')).slice(0, 70)}` : 'No messages yet'}</small><footer><span class="table-status status-${task.status}">${esc(task.jiraStatus || task.status)}</span>${count ? `<b>${count}</b>` : ''}</footer></button>`; }).join('') : '<p class="task-chat-empty">No Task Chats match this view.</p>'}</div></aside>`;
@@ -214,13 +218,35 @@
     } catch (error) { console.error('Task Chat microphone failed', error); toast('Microphone access is required to record a voice message'); }
   };
   window.deleteTaskChatAudio55 = () => { audioDraft55 = null; renderTaskChat(); };
-  window.sendTaskChatMessage55 = (id, event) => {
+  window.sendTaskChatMessage55 = async (id, event) => {
     event.preventDefault(); const task = state.tasks.find(item => item.id === id), text = event.currentTarget.elements.message.value.trim();
     if (!task || (!text && !pendingFiles55.length && !audioDraft55)) return;
     const createdAt = new Date().toISOString(), images = pendingFiles55.filter(file => file.type?.startsWith('image/')).map(file => file.data), attachments = pendingFiles55.filter(file => !file.type?.startsWith('image/'));
-    task.comments = task.comments || []; task.comments.unshift({ id: `comment-${Date.now()}`, author: CURRENT_USER, role: roleName(), text, images, attachments, audioMessage: audioDraft55, replyTo: chatReply55, createdAt, human: true });
+    const comment = { id: `comment-${Date.now()}`, author: CURRENT_USER, role: roleName(), text, images, attachments, audioMessage: audioDraft55, replyTo: chatReply55, createdAt, human: true, deliveryStatus: 'sending' };
+    task.comments = task.comments || []; task.comments.unshift(comment);
     task.lastHumanActivityAt = createdAt; task.updated = createdAt; task.chatReadBy = { ...(task.chatReadBy || {}), [CURRENT_USER]: createdAt }; task.audit = task.audit || []; task.audit.unshift(`Chat comment added by ${CURRENT_USER}`);
-    chatReply55 = null; pendingFiles55 = []; audioDraft55 = null; save(); renderTaskChat(); toast('Comment sent');
+    chatReply55 = null; pendingFiles55 = []; audioDraft55 = null; renderTaskChat();
+    try {
+      await window.shgSaveCommentImmediately?.(task, comment);
+      comment.deliveryStatus = 'sent';
+      save(); renderTaskChat(); toast('Comment sent');
+    } catch (error) {
+      comment.deliveryStatus = 'failed';
+      renderTaskChat();
+      toast(error?.message || 'The comment was not sent. Tap Retry.');
+    }
+  };
+  window.retryTaskChatMessage55 = async commentId => {
+    const task = state.tasks.find(item => item.id === window.MAILO_ACTIVE_CHAT);
+    const comment = task?.comments?.find(item => item.id === commentId);
+    if (!task || !comment) return;
+    comment.deliveryStatus = 'sending'; renderTaskChat();
+    try {
+      await window.shgSaveCommentImmediately?.(task, comment);
+      comment.deliveryStatus = 'sent'; save(); renderTaskChat(); toast('Comment sent');
+    } catch (error) {
+      comment.deliveryStatus = 'failed'; renderTaskChat(); toast(error?.message || 'The comment was not sent.');
+    }
   };
 
   const previousRender55 = render;

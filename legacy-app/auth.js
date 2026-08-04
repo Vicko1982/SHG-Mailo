@@ -2,6 +2,7 @@
   const SUPABASE_URL = 'https://ewjalucwaeotamodlajs.supabase.co';
   const SUPABASE_KEY = 'sb_publishable_XeGECEGDBFj1b0z-zyb2kQ_SdlTL2tG';
   const SESSION_KEY = 'shg-supabase-session';
+  const ROLE_CACHE_KEY = 'mailo-role-by-name';
   const REFRESH_EARLY_MS = 5 * 60 * 1000;
   const REFRESH_RETRY_MS = 30 * 1000;
   const AUTH_REQUEST_TIMEOUT_MS = 15000;
@@ -54,6 +55,18 @@
   let refreshPromise = null;
   let refreshTimer = null;
 
+  function cachedRoleLabel(name) {
+    if (!name) return '';
+    if (name === 'Victor Stavropoulos') return 'Main Admin';
+    try {
+      const role = JSON.parse(localStorage.getItem(ROLE_CACHE_KEY) || '{}')?.[name];
+      if (role === 'main_admin') return 'Main Admin';
+      if (role === 'admin') return 'Admin';
+      if (role === 'user') return 'User';
+    } catch {}
+    return 'Loading permissions…';
+  }
+
   function withTimeout(promise, timeoutMs, message) {
     let timer;
     const timeout = new Promise((_, reject) => {
@@ -76,13 +89,14 @@
         ? name.split(/\s+/).filter(Boolean).map(part => part[0]).join('').slice(0, 2).toUpperCase()
         : '…';
     }
-    if (roleElement) roleElement.textContent = name ? 'Loading permissions…' : '';
+    if (roleElement) roleElement.textContent = cachedRoleLabel(name);
   }
 
   function storeSession(value) {
     session = normalizeSession(value, session);
     localStorage.setItem(SESSION_KEY, JSON.stringify(session));
     updateAuthIdentity(session);
+    window.dispatchEvent(new CustomEvent('shg:auth-session', { detail: { session } }));
     scheduleRefresh();
     return session;
   }

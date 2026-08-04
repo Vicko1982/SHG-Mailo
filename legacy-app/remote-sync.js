@@ -5,8 +5,10 @@
   const SPACE_ACCESS_KEY = 'shg-space-access';
   const ADMIN_KEY = 'shg-administrators';
   const APPROVER_KEY = 'shg-approvers';
+  const ROLE_CACHE_KEY = 'mailo-role-by-name';
   const DELETED_TASKS_KEY = 'shg-deleted-task-ids';
   const REMOTE_TIMEOUT = 20000;
+  const COMMENT_FALLBACK_INTERVAL = 15000;
 
   const cache = {
     tasks: new Map(),
@@ -26,6 +28,14 @@
     retryDelay: 3000,
   };
   let prepareRetryTimer = null;
+  let realtimeClient = null;
+  let realtimeChannel = null;
+  let realtimeReconnectTimer = null;
+  let realtimeReconnectDelay = 2000;
+  let realtimeConnected = false;
+  let commentFallbackTimer = null;
+  let commentFallbackRunning = false;
+  let lastCommentSyncAt = '';
 
   function session() {
     return window.shgGetSupabaseSession?.() || null;
@@ -216,32 +226,101 @@
     };
   }
 
+  function latestTimestamp(current, candidate) {
+    if (!candidate) return current || '';
+    if (!current) return candidate;
+    return new Date(candidate).getTime() > new Date(current).getTime() ? candidate : current;
+  }
+
+  function emitCommentChange(type, row) {
+    if (!row) return;
+    const remoteTask = cache.tasks.get(row.task_id);
+    const taskId = remoteTask?.id || '';
+    if (!taskId) return;
+    const comment = type === 'DELETE' ? null : commentFromRow(row);
+    if (type === 'DELETE') {
+      cache.comments.delete(row.id);
+      cache.commentHashes.delete(row.id);
+    } else {
+      cache.comments.set(row.id, { ...row, localId: comment.id });
+      cache.commentHashes.set(row.id, commentHash(comment));
+      lastCommentSyncAt = latestTimestamp(lastCommentSyncAt, row.updated_at || row.created_at);
+    }
+    window.dispatchEvent(new CustomEvent('shg:comment-change', {
+      detail: { type, taskId, comment, remoteId: row.id },
+    }));
+  }
+
+  async function hydrateRemoteComments(tasks) {
+    const requestedAt = Date.now();
+    const rows = await fetchAll('task_comments', 'id,task_id,author_id,content,created_at,updated_at,legacy_data');
+    const byTask = new Map();
+    cache.comments.clear();
+    cache.commentHashes.clear();
+    for (const row of rows) {
+      const comment = commentFromRow(row);
+      if (!byTask.has(row.task_id)) byTask.set(row.task_id, []);
+      byTask.get(row.task_id).push(comment);
+      cache.comments.set(row.id, { ...row, localId: comment.id });
+      cache.commentHashes.set(row.id, commentHash(comment));
+      lastCommentSyncAt = latestTimestamp(lastCommentSyncAt, row.updated_at || row.created_at);
+    }
+    for (const comments of byTask.values()) {
+      comments.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+    }
+    for (const task of tasks) {
+      const remote = byTask.get(task._supabaseId) || [];
+      const known = new Set(remote.map(comment => comment.id));
+      const locallyNew = (task.comments || []).filter(comment => {
+        if (known.has(comment.id)) return false;
+        if (!comment._supabaseId) return true;
+        return new Date(comment.createdAt || 0).getTime() >= requestedAt - 1000;
+      });
+      task.comments = [...remote, ...locallyNew]
+        .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+      if (task._supabaseId) cache.taskHashes.set(task._supabaseId, taskHash(task));
+    }
+    writeTaskCache(tasks);
+    window.dispatchEvent(new CustomEvent('shg:comments-ready', {
+      detail: { tasks, comments: rows.length },
+    }));
+    return rows;
+  }
+
   async function loadRemoteData() {
     if (!enabled()) return { remote: false };
+    let rawLocalTasks = [];
     let rawPendingLocalTasks = [];
     let deletedTaskKeys = new Set();
     try {
-      rawPendingLocalTasks = (JSON.parse(localStorage.getItem(TASK_KEY)) || [])
-        .filter(task => task && !task._supabaseId);
+      rawLocalTasks = JSON.parse(localStorage.getItem(TASK_KEY)) || [];
+      rawPendingLocalTasks = rawLocalTasks.filter(task => task && !task._supabaseId);
     } catch {}
     try {
       deletedTaskKeys = new Set(JSON.parse(localStorage.getItem(DELETED_TASKS_KEY)) || []);
     } catch {}
 
-    const core = await Promise.all([
-      fetchAll('profiles', 'id,full_name,email,initials,is_active,last_login,voice_names,aliases'),
-      fetchAll('user_roles', 'user_id,role'),
-      fetchAll('spaces', 'id,key,name,color,type,owner_id'),
-      fetchAll('space_members', 'space_id,user_id'),
-      fetchAll('tasks', 'id,task_key,title,space_id,status,jira_status,priority,assignee_id,supervisor_id,approver_id,description,issue_type,parent_id,created_at,updated_at,due_date,target_start_date,unblocking_date,disable_main_admin_reminders,last_human_activity_at,last_status_changed_at,labels,cancellation_reason,created_by_id,audit,is_mini_task,manual_order,legacy_data'),
-    ]);
+    const profilesRequest = fetchAll('profiles', 'id,full_name,email,initials,is_active,last_login,voice_names,aliases');
+    const rolesRequest = fetchAll('user_roles', 'user_id,role');
+    const spacesRequest = fetchAll('spaces', 'id,key,name,color,type,owner_id');
+    const membersRequest = fetchAll('space_members', 'space_id,user_id');
+    const tasksRequest = fetchAll('tasks', 'id,task_key,title,space_id,status,jira_status,priority,assignee_id,supervisor_id,approver_id,description,issue_type,parent_id,created_at,updated_at,due_date,target_start_date,unblocking_date,disable_main_admin_reminders,last_human_activity_at,last_status_changed_at,labels,cancellation_reason,created_by_id,audit,is_mini_task,manual_order,legacy_data');
+    Promise.all([profilesRequest, rolesRequest]).then(([earlyProfiles, earlyRoles]) => {
+      const names = new Map(earlyProfiles.map(profile => [profile.id, profile.full_name || '']));
+      const earlyRoleByName = Object.fromEntries(earlyRoles.map(row => [names.get(row.user_id), row.role]).filter(([name]) => Boolean(name)));
+      safeLocalSet(ROLE_CACHE_KEY, JSON.stringify(earlyRoleByName));
+      const currentName = names.get(session()?.user?.id) || '';
+      const role = currentName === 'Victor Stavropoulos' ? 'main_admin' : earlyRoleByName[currentName];
+      const roleElement = document.getElementById('roleLabel');
+      if (currentName) window.SHG_AUTH_USER_NAME = currentName;
+      if (roleElement && role) roleElement.textContent = role === 'main_admin' ? 'Main Admin' : role === 'admin' ? 'Admin' : 'User';
+    }).catch(() => {});
+    const core = await Promise.all([profilesRequest, rolesRequest, spacesRequest, membersRequest, tasksRequest]);
     const optional = await Promise.allSettled([
-      fetchAll('task_comments', 'id,task_id,author_id,content,created_at,updated_at,legacy_data'),
       fetchAll('app_settings', 'current_approver_id', 'id=eq.true'),
     ]);
     const [profiles, roles, spaces, members, tasks] = core;
-    const comments = optional[0].status === 'fulfilled' ? optional[0].value : [];
-    const settings = optional[1].status === 'fulfilled' ? optional[1].value : [];
+    const settings = optional[0].status === 'fulfilled' ? optional[0].value : [];
     for (const result of optional) {
       if (result.status === 'rejected') console.warn('Optional shared data unavailable', result.reason);
     }
@@ -263,12 +342,14 @@
     const commentsByTask = new Map();
     cache.comments.clear();
     cache.commentHashes.clear();
-    for (const row of comments) {
-      const comment = commentFromRow(row);
-      if (!commentsByTask.has(row.task_id)) commentsByTask.set(row.task_id, []);
-      commentsByTask.get(row.task_id).push(comment);
-      cache.comments.set(row.id, { ...row, localId: comment.id });
-      cache.commentHashes.set(row.id, commentHash(comment));
+    for (const localTask of rawLocalTasks) {
+      if (!localTask?._supabaseId || !Array.isArray(localTask.comments)) continue;
+      commentsByTask.set(localTask._supabaseId, localTask.comments);
+      for (const comment of localTask.comments) {
+        if (!comment?._supabaseId) continue;
+        cache.comments.set(comment._supabaseId, { id: comment._supabaseId, task_id: localTask._supabaseId, localId: comment.id });
+        cache.commentHashes.set(comment._supabaseId, commentHash(comment));
+      }
     }
     for (const taskComments of commentsByTask.values()) {
       taskComments.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
@@ -325,6 +406,8 @@
       .filter(row => row.role === 'main_admin')
       .map(row => profileName(row.user_id))
       .filter(Boolean);
+    const roleByName = Object.fromEntries(roles.map(row => [profileName(row.user_id), row.role]).filter(([name]) => Boolean(name)));
+    safeLocalSet(ROLE_CACHE_KEY, JSON.stringify(roleByName));
     const localActivity = [];
     const currentApproverName = profileName(settings[0]?.current_approver_id) ||
       [...new Set(localTasks.map(task => task.approver).filter(Boolean))][0] ||
@@ -339,7 +422,7 @@
       spaceAccess: access,
       adminNames,
       mainAdminNames,
-      roleByName: Object.fromEntries(roles.map(row => [profileName(row.user_id), row.role]).filter(([name]) => Boolean(name))),
+      roleByName,
       approverNames,
       currentApproverName,
     };
@@ -354,8 +437,13 @@
     cache.ready = true;
     window.SHG_REMOTE_READY = true;
     window.dispatchEvent(new CustomEvent('shg:remote-ready', {
-      detail: { tasks: localTasks.length, comments: comments.length, spaces: spaces.length },
+      detail: { tasks: localTasks.length, comments: 'loading', spaces: spaces.length },
     }));
+    // Comments are intentionally hydrated after the workspace is interactive.
+    // This keeps authentication/permissions from waiting on the full chat history.
+    hydrateRemoteComments(localTasks)
+      .catch(error => console.warn('Task Chat history unavailable', error))
+      .finally(() => startRealtimeComments());
     // The activity history is not needed to paint the task workspace. Load it
     // after the interactive shell is ready, then hydrate the Activity tab.
     fetchAll('activity_log', 'id,user_id,action,task_id,task_title,metadata,created_at,legacy_data,task:tasks(task_key)')
@@ -370,7 +458,7 @@
     if (pendingLocalTasks.length || tombstonedRemoteTasks.length) {
       setTimeout(() => syncTasks(localTasks, localActivity), 0);
     }
-    return { remote: true, tasks: localTasks.length, comments: comments.length, spaces: spaces.length };
+    return { remote: true, tasks: localTasks.length, comments: 'loading', spaces: spaces.length };
   }
 
   async function prepareRemoteData() {
@@ -395,13 +483,78 @@
     }
   }
 
-  async function fetchRemoteComments() {
+  async function fetchRemoteComments(since = '') {
     if (!enabled() || !cache.ready) return [];
-    const rows = await fetchAll('task_comments', 'id,task_id,author_id,content,created_at,updated_at,legacy_data');
+    const extra = since ? `updated_at=gt.${encodeURIComponent(since)}&order=updated_at.asc` : '';
+    const rows = await fetchAll('task_comments', 'id,task_id,author_id,content,created_at,updated_at,legacy_data', extra);
     return rows.map(row => ({
       taskId: cache.tasks.get(row.task_id)?.id || '',
       comment: commentFromRow(row),
+      row,
     })).filter(item => item.taskId);
+  }
+
+  async function pollRecentComments() {
+    if (commentFallbackRunning || !enabled() || !cache.ready || document.visibilityState !== 'visible') return;
+    commentFallbackRunning = true;
+    try {
+      const entries = await fetchRemoteComments(lastCommentSyncAt);
+      for (const entry of entries) emitCommentChange(cache.comments.has(entry.row.id) ? 'UPDATE' : 'INSERT', entry.row);
+    } catch (error) {
+      if (!realtimeConnected) console.warn('Task Chat fallback sync unavailable', error);
+    } finally {
+      commentFallbackRunning = false;
+    }
+  }
+
+  function scheduleRealtimeReconnect() {
+    if (realtimeReconnectTimer || !enabled()) return;
+    realtimeReconnectTimer = setTimeout(() => {
+      realtimeReconnectTimer = null;
+      startRealtimeComments();
+    }, realtimeReconnectDelay);
+    realtimeReconnectDelay = Math.min(realtimeReconnectDelay * 2, 30000);
+  }
+
+  async function startRealtimeComments() {
+    if (!enabled() || !cache.ready || !window.supabase?.createClient) {
+      if (!commentFallbackTimer) commentFallbackTimer = setInterval(pollRecentComments, COMMENT_FALLBACK_INTERVAL);
+      return;
+    }
+    if (!commentFallbackTimer) commentFallbackTimer = setInterval(pollRecentComments, COMMENT_FALLBACK_INTERVAL);
+    try {
+      const activeSession = await window.shgEnsureFreshSession?.(60 * 1000) || session();
+      if (!activeSession?.access_token) throw new Error('No active Task Chat session');
+      if (!realtimeClient) {
+        realtimeClient = window.supabase.createClient(window.SHG_SUPABASE_URL, window.SHG_SUPABASE_KEY, {
+          auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+          realtime: { params: { eventsPerSecond: 20 } },
+        });
+      }
+      await realtimeClient.realtime.setAuth(activeSession.access_token);
+      if (realtimeChannel) await realtimeClient.removeChannel(realtimeChannel).catch(() => {});
+      realtimeChannel = realtimeClient
+        .channel('mailo-task-comments-v60')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'task_comments' }, payload => {
+          emitCommentChange(payload.eventType, payload.eventType === 'DELETE' ? payload.old : payload.new);
+        })
+        .subscribe(status => {
+          realtimeConnected = status === 'SUBSCRIBED';
+          window.dispatchEvent(new CustomEvent('shg:chat-connection', { detail: { status } }));
+          if (realtimeConnected) {
+            realtimeReconnectDelay = 2000;
+            if (realtimeReconnectTimer) clearTimeout(realtimeReconnectTimer);
+            realtimeReconnectTimer = null;
+            pollRecentComments();
+          } else if (['CHANNEL_ERROR', 'TIMED_OUT', 'CLOSED'].includes(status)) {
+            scheduleRealtimeReconnect();
+          }
+        });
+    } catch (error) {
+      realtimeConnected = false;
+      console.warn('Task Chat Realtime unavailable; fallback sync remains active', error);
+      scheduleRealtimeReconnect();
+    }
   }
 
   function incrementTaskKey(taskKey) {
@@ -441,6 +594,54 @@
     };
   }
 
+  function commentPayload(taskId, comment) {
+    return {
+      task_id: taskId,
+      author_id: profileId(comment.author),
+      content: String(comment.text || ' '),
+      created_at: comment.createdAt || new Date().toISOString(),
+      updated_at: comment.createdAt || new Date().toISOString(),
+      legacy_data: (() => {
+        const clone = safeClone(comment) || {};
+        delete clone._supabaseId;
+        delete clone.pending;
+        delete clone.deliveryStatus;
+        return clone;
+      })(),
+    };
+  }
+
+  async function saveCommentImmediately(task, comment) {
+    if (!task || !comment) throw new Error('The Task Chat message is incomplete');
+    if (!cache.ready) throw new Error('The shared Task Chat is still connecting');
+    if (!task._supabaseId) {
+      await upsertTask(task);
+      return comment;
+    }
+    const payload = commentPayload(task._supabaseId, comment);
+    if (comment._supabaseId) {
+      await request(`/rest/v1/task_comments?id=eq.${comment._supabaseId}`, {
+        method: 'PATCH',
+        headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify(payload),
+      });
+      cache.commentHashes.set(comment._supabaseId, commentHash(comment));
+      return comment;
+    }
+    const inserted = await request('/rest/v1/task_comments?select=id,task_id,author_id,content,created_at,updated_at,legacy_data', {
+      method: 'POST',
+      headers: { Prefer: 'return=representation' },
+      body: JSON.stringify(payload),
+    });
+    const row = inserted?.[0];
+    if (!row?.id) throw new Error('The Task Chat message was not confirmed by the shared database');
+    comment._supabaseId = row.id;
+    cache.comments.set(row.id, { ...row, localId: comment.id });
+    cache.commentHashes.set(row.id, commentHash(comment));
+    lastCommentSyncAt = latestTimestamp(lastCommentSyncAt, row.updated_at || row.created_at);
+    return comment;
+  }
+
   async function syncComments(task) {
     const taskId = task._supabaseId;
     const current = Array.isArray(task.comments) ? task.comments : [];
@@ -459,19 +660,7 @@
     }
 
     for (const comment of current) {
-      const payload = {
-        task_id: taskId,
-        author_id: profileId(comment.author),
-        content: String(comment.text || ' '),
-        created_at: comment.createdAt || new Date().toISOString(),
-        updated_at: comment.createdAt || new Date().toISOString(),
-        legacy_data: (() => {
-          const clone = safeClone(comment) || {};
-          delete clone._supabaseId;
-          delete clone.pending;
-          return clone;
-        })(),
-      };
+      const payload = commentPayload(taskId, comment);
       const hash = commentHash(comment);
       if (comment._supabaseId) {
         if (cache.commentHashes.get(comment._supabaseId) !== hash) {
@@ -649,9 +838,18 @@
 
   window.shgPrepareRemoteData = prepareRemoteData;
   window.shgFetchRemoteComments = fetchRemoteComments;
+  window.shgSaveCommentImmediately = saveCommentImmediately;
+  window.shgStartRealtimeComments = startRealtimeComments;
   window.shgQueueRemoteSync = queueSync;
   window.shgFlushRemoteSync = syncTasks;
   window.shgSafeLocalSet = safeLocalSet;
   window.shgWriteTaskCache = writeTaskCache;
   window.shgSaveUserSettings = saveUserSettings;
+  window.addEventListener('shg:auth-session', () => startRealtimeComments());
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      pollRecentComments();
+      if (!realtimeConnected) startRealtimeComments();
+    }
+  });
 })();
