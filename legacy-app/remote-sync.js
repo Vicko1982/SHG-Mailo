@@ -395,6 +395,15 @@
     }
   }
 
+  async function fetchRemoteComments() {
+    if (!enabled() || !cache.ready) return [];
+    const rows = await fetchAll('task_comments', 'id,task_id,author_id,content,created_at,updated_at,legacy_data');
+    return rows.map(row => ({
+      taskId: cache.tasks.get(row.task_id)?.id || '',
+      comment: commentFromRow(row),
+    })).filter(item => item.taskId);
+  }
+
   function incrementTaskKey(taskKey) {
     const match = String(taskKey || '').match(/^(.*?)-(\d+)$/);
     if (!match) return `${taskKey}-2`;
@@ -639,6 +648,7 @@
   }
 
   window.shgPrepareRemoteData = prepareRemoteData;
+  window.shgFetchRemoteComments = fetchRemoteComments;
   window.shgQueueRemoteSync = queueSync;
   window.shgFlushRemoteSync = syncTasks;
   window.shgSafeLocalSet = safeLocalSet;

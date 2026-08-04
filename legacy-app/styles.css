@@ -199,6 +199,19 @@ main{grid-column:2;min-width:0}.topbar{height:70px;background:white;border-botto
   .users-page-head{display:grid;gap:12px}.managed-table-scroll{overflow:auto}.overview-dashboard-grid{grid-template-columns:1fr}.overview-wide{grid-column:auto}.overview-table-wrap{overflow:auto}
 }
 
+/* Version 58: content-driven Task details, collapsible Chat info and safe phone widths. */
+.task-details-modal #modalContent>.description-heading,.task-details-modal #modalContent>.editable-task-description,.task-details-modal #modalContent>.audit,.task-details-modal #modalContent>.task-viewers,.task-details-modal #modalContent>.comments{position:relative;display:block;flex:0 0 auto;clear:both;width:100%;max-width:100%;box-sizing:border-box}
+.task-details-modal #modalContent>.editable-task-description{height:auto!important;min-height:72px;max-height:none!important;margin-bottom:20px;overflow:visible!important;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}
+.task-details-modal #modalContent>.audit,.task-details-modal #modalContent>.task-viewers{margin-top:18px}
+.task-chat-info58{min-width:0;border-bottom:1px solid #e4e9f1;background:#fff}.task-chat-info58>summary{display:flex;align-items:center;gap:10px;padding:11px 22px;cursor:pointer;list-style:none;color:#263852}.task-chat-info58>summary::-webkit-details-marker{display:none}.task-chat-info58>summary:before{content:'▸';color:#60748e;font-size:14px}.task-chat-info58[open]>summary:before{content:'▾'}.task-chat-info58>summary span{font-size:12px;font-weight:800}.task-chat-info58>summary small{margin-left:auto;color:#8a97aa;font-size:10px}.task-chat-info58 .task-chat-summary{border-top:1px solid #edf1f6;border-bottom:0}
+.keyboard-date58{position:relative;display:grid;grid-template-columns:minmax(0,1fr) 44px;gap:7px;width:100%}.keyboard-date58>input:first-child{min-width:0;width:100%;box-sizing:border-box}.native-date-picker58{width:44px!important;min-width:44px;padding:8px!important;color:transparent;background-color:#fff;cursor:pointer}.native-date-picker58::-webkit-datetime-edit{display:none}.native-date-picker58::-webkit-calendar-picker-indicator{width:22px;height:22px;margin:0;opacity:1;cursor:pointer}
+@media(max-width:850px){
+  body.mailo-chat-open57 .task-chat-system{display:grid;width:auto;min-width:0;max-width:calc(100% - 12px);margin:12px 6px;padding:9px 10px;box-sizing:border-box;white-space:normal;overflow-wrap:anywhere;word-break:break-word}
+  body.mailo-chat-open57 .task-chat-system span,body.mailo-chat-open57 .task-chat-system time{display:block;min-width:0;max-width:100%;white-space:normal;overflow-wrap:anywhere;word-break:break-word}
+  .task-chat-info58>summary{padding:9px 12px}.task-chat-info58>summary small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .task-chat-info58 .task-chat-summary{width:100%;box-sizing:border-box}
+}
+
 @media(max-width:430px){
   .filters{grid-template-columns:1fr}.filter-btn:first-child{grid-column:auto}.page-head h1{font-size:25px}.mobile-new-task{font-size:13px}.task-chat-summary{padding:8px 12px}.task-chat-message header{flex-wrap:wrap}.task-chat-message header time{font-size:10px}
 }
