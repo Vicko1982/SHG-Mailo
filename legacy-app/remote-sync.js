@@ -33,6 +33,8 @@
   let realtimeReconnectTimer = null;
   let realtimeReconnectDelay = 2000;
   let realtimeConnected = false;
+  let realtimeStarting = false;
+  let commentHistoryReady = false;
   let commentFallbackTimer = null;
   let commentFallbackRunning = false;
   let lastCommentSyncAt = '';
@@ -232,7 +234,7 @@
     return new Date(candidate).getTime() > new Date(current).getTime() ? candidate : current;
   }
 
-  function emitCommentChange(type, row) {
+  function emitCommentChange(type, row, dispatch = true) {
     if (!row) return;
     const remoteTask = cache.tasks.get(row.task_id);
     const taskId = remoteTask?.id || '';
@@ -246,9 +248,9 @@
       cache.commentHashes.set(row.id, commentHash(comment));
       lastCommentSyncAt = latestTimestamp(lastCommentSyncAt, row.updated_at || row.created_at);
     }
-    window.dispatchEvent(new CustomEvent('shg:comment-change', {
-      detail: { type, taskId, comment, remoteId: row.id },
-    }));
+    const detail = { type, taskId, comment, remoteId: row.id };
+    if (dispatch) window.dispatchEvent(new CustomEvent('shg:comment-change', { detail }));
+    return detail;
   }
 
   async function hydrateRemoteComments(tasks) {
@@ -280,6 +282,7 @@
         .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
       if (task._supabaseId) cache.taskHashes.set(task._supabaseId, taskHash(task));
     }
+    commentHistoryReady = true;
     writeTaskCache(tasks);
     window.dispatchEvent(new CustomEvent('shg:comments-ready', {
       detail: { tasks, comments: rows.length },
@@ -289,6 +292,7 @@
 
   async function loadRemoteData() {
     if (!enabled()) return { remote: false };
+    commentHistoryReady = false;
     let rawLocalTasks = [];
     let rawPendingLocalTasks = [];
     let deletedTaskKeys = new Set();
@@ -442,7 +446,13 @@
     // Comments are intentionally hydrated after the workspace is interactive.
     // This keeps authentication/permissions from waiting on the full chat history.
     hydrateRemoteComments(localTasks)
-      .catch(error => console.warn('Task Chat history unavailable', error))
+      .catch(error => {
+        console.warn('Task Chat history unavailable', error);
+        // Start from now when the historical request is temporarily unavailable.
+        // This prevents a fallback reconnect from replaying the whole table.
+        lastCommentSyncAt = new Date().toISOString();
+        commentHistoryReady = true;
+      })
       .finally(() => startRealtimeComments());
     // The activity history is not needed to paint the task workspace. Load it
     // after the interactive shell is ready, then hydrate the Activity tab.
@@ -495,11 +505,18 @@
   }
 
   async function pollRecentComments() {
-    if (commentFallbackRunning || !enabled() || !cache.ready || document.visibilityState !== 'visible') return;
+    if (commentFallbackRunning || !commentHistoryReady || !enabled() || !cache.ready || document.visibilityState !== 'visible') return;
     commentFallbackRunning = true;
     try {
       const entries = await fetchRemoteComments(lastCommentSyncAt);
-      for (const entry of entries) emitCommentChange(cache.comments.has(entry.row.id) ? 'UPDATE' : 'INSERT', entry.row);
+      const changes = [];
+      for (const entry of entries) {
+        const detail = emitCommentChange(cache.comments.has(entry.row.id) ? 'UPDATE' : 'INSERT', entry.row, false);
+        if (detail) changes.push(detail);
+      }
+      if (changes.length) {
+        window.dispatchEvent(new CustomEvent('shg:comment-batch', { detail: { changes } }));
+      }
     } catch (error) {
       if (!realtimeConnected) console.warn('Task Chat fallback sync unavailable', error);
     } finally {
@@ -517,11 +534,13 @@
   }
 
   async function startRealtimeComments() {
+    if (!commentHistoryReady || realtimeStarting) return;
     if (!enabled() || !cache.ready || !window.supabase?.createClient) {
       if (!commentFallbackTimer) commentFallbackTimer = setInterval(pollRecentComments, COMMENT_FALLBACK_INTERVAL);
       return;
     }
     if (!commentFallbackTimer) commentFallbackTimer = setInterval(pollRecentComments, COMMENT_FALLBACK_INTERVAL);
+    realtimeStarting = true;
     try {
       const activeSession = await window.shgEnsureFreshSession?.(60 * 1000) || session();
       if (!activeSession?.access_token) throw new Error('No active Task Chat session');
@@ -554,6 +573,8 @@
       realtimeConnected = false;
       console.warn('Task Chat Realtime unavailable; fallback sync remains active', error);
       scheduleRealtimeReconnect();
+    } finally {
+      realtimeStarting = false;
     }
   }
 

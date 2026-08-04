@@ -51,7 +51,7 @@
         </div>
         <button id="sidebarUserButton" class="sidebar-footer" type="button" aria-haspopup="menu" aria-expanded="false">
           <div id="currentUserAvatar" class="avatar">…</div>
-          <div class="user-meta"><strong id="currentUserName">Loading user…</strong><span id="roleLabel">Loading permissions…</span><small class="version-badge">Version 60</small></div>
+          <div class="user-meta"><strong id="currentUserName">Loading user…</strong><span id="roleLabel">Loading permissions…</span><small class="version-badge">Version 61</small></div>
           <span class="dots" aria-hidden="true">•••</span>
         </button>
       </aside>
@@ -143,9 +143,9 @@
         <p id="authError" class="auth-error hidden"></p>
       </section>
     </div>
-    <script src="auth.js?v=260"></script>
+    <script src="auth.js?v=261"></script>
     <script src="vendor/supabase.js?v=21107"></script>
-    <script src="remote-sync.js?v=260"></script>
+    <script src="remote-sync.js?v=261"></script>
     <script>
       (async () => {
         const loadScript = source => new Promise((resolve, reject) => {
@@ -215,7 +215,7 @@
         await loadScript('version-57.js?v=57');
         await loadScript('version-58.js?v=58');
         await loadScript('version-59.js?v=59');
-        await loadScript('version-60.js?v=60');
+        await loadScript('version-60.js?v=61');
         window.SHG_APP_LOADED = true;
         if (window.SHG_REMOTE_LOAD_ERROR && typeof window.toast === 'function') {
           window.toast(`The shared database is temporarily unavailable. Retrying automatically. ${window.SHG_REMOTE_LOAD_ERROR.message || ''}`.trim());

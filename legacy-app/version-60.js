@@ -1,4 +1,4 @@
-/* MAILO Version 60 — fast permissions and realtime Task Chat delivery. */
+/* MAILO Version 60/61 — fast permissions and stable realtime Task Chat delivery. */
 (() => {
   window.SHG_USE_REALTIME_CHAT60 = true;
   if (window.SHG_TASK_CHAT_POLL58) {
@@ -78,17 +78,32 @@
     renderChatUpdate60();
   });
 
-  window.addEventListener('shg:comment-change', event => {
-    const { type, taskId, comment, remoteId } = event.detail || {};
+  function applyCommentChange60(detail) {
+    const { type, taskId, comment, remoteId } = detail || {};
     const task = state.tasks.find(item => item.id === taskId);
-    if (!task) return;
+    if (!task) return false;
     if (type === 'DELETE') {
       const before = task.comments?.length || 0;
       task.comments = (task.comments || []).filter(item => item._supabaseId !== remoteId && item.id !== remoteId);
-      if (task.comments.length === before) return;
+      if (task.comments.length === before) return false;
     } else if (!mergeComment60(task, comment)) {
-      return;
+      return false;
     }
+    return true;
+  }
+
+  window.addEventListener('shg:comment-change', event => {
+    if (!applyCommentChange60(event.detail)) return;
+    writeTaskCache(state.tasks);
+    renderChatUpdate60();
+  });
+
+  window.addEventListener('shg:comment-batch', event => {
+    const changes = event.detail?.changes || [];
+    let changed = false;
+    for (const detail of changes) changed = applyCommentChange60(detail) || changed;
+    if (!changed) return;
+    // One cache write and one render for the entire fallback batch.
     writeTaskCache(state.tasks);
     renderChatUpdate60();
   });
@@ -99,5 +114,7 @@
     writeTaskCache(state.tasks);
     renderChatUpdate60();
   }
-  window.shgStartRealtimeComments?.();
+  // Realtime is started by remote-sync only after historical comments have
+  // established a safe high-water mark. Starting it here would replay all
+  // historical comments through the fallback path on a cold load.
 })();
