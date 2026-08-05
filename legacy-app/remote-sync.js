@@ -61,9 +61,16 @@
   function taskForLocalCache(task) {
     const clone = safeClone(task) || {};
     if (!clone._supabaseId) return clone;
-    for (const comment of clone.comments || []) {
+    // The shared database is the source of truth for synced comments. Keeping
+    // thousands of them (and their attachments) in localStorage made normal
+    // browser profiles stall while a clean Private/Incognito profile worked.
+    // Retain only comments which have not reached the shared database yet.
+    clone.comments = (clone.comments || []).filter(comment => !comment._supabaseId);
+    for (const comment of clone.comments) {
       if (!Array.isArray(comment.images)) continue;
       comment.images = comment.images.filter(source => !String(source || '').startsWith('data:'));
+      comment.attachments = (comment.attachments || []).filter(file => !String(file?.data || '').startsWith('data:'));
+      if (String(comment.audioMessage?.data || '').startsWith('data:')) delete comment.audioMessage;
     }
     return clone;
   }
