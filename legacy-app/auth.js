@@ -1,4 +1,16 @@
 (() => {
+  // Version 63 recovery: discard only an oversized reconstructable Task cache.
+  // Saved filters and all user preferences remain untouched.
+  try {
+    const cachedTasks = localStorage.getItem('shg-tasks-v5');
+    if (cachedTasks && cachedTasks.length > 1500000) localStorage.removeItem('shg-tasks-v5');
+    const workspace = localStorage.getItem('shg-last-workspace-state');
+    if (workspace && workspace.length > 250000) localStorage.removeItem('shg-last-workspace-state');
+    localStorage.setItem('mailo-browser-recovery-v63', 'complete');
+  } catch (error) {
+    try { localStorage.removeItem('shg-tasks-v5'); } catch {}
+    console.warn('MAILO browser cache recovery applied', error);
+  }
   const SUPABASE_URL = 'https://ewjalucwaeotamodlajs.supabase.co';
   const SUPABASE_KEY = 'sb_publishable_XeGECEGDBFj1b0z-zyb2kQ_SdlTL2tG';
   const SESSION_KEY = 'shg-supabase-session';

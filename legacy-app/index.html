@@ -16,6 +16,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="styles.css?v=262" />
+    <link rel="stylesheet" href="version-63.css?v=63" />
   </head>
   <body>
     <div class="app-shell">
@@ -217,6 +218,7 @@
         await loadScript('version-59.js?v=59');
         await loadScript('version-60.js?v=61');
         await loadScript('version-62.js?v=62');
+        await loadScript('version-63.js?v=63');
         window.SHG_APP_LOADED = true;
         if (window.SHG_REMOTE_LOAD_ERROR && typeof window.toast === 'function') {
           window.toast(`The shared database is temporarily unavailable. Retrying automatically. ${window.SHG_REMOTE_LOAD_ERROR.message || ''}`.trim());
