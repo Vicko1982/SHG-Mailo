@@ -66,6 +66,7 @@
   let pendingEmail = '';
   let refreshPromise = null;
   let refreshTimer = null;
+  let authHandlersBound = false;
 
   function cachedRoleLabel(name) {
     if (!name) return '';
@@ -274,15 +275,17 @@
     document.getElementById('authOtp').focus();
   }
 
-  function initAuth() {
+  function initAuth(forceLogin = false) {
     const gate = document.getElementById('authGate');
-    if (!AUTH_REQUIRED || session) {
+    if (!AUTH_REQUIRED || (session && !forceLogin)) {
       gate.classList.add('hidden');
       document.body.classList.remove('auth-locked');
       return;
     }
     gate.classList.remove('hidden');
     document.body.classList.add('auth-locked');
+    if (authHandlersBound) return;
+    authHandlersBound = true;
 
     document.getElementById('authEmailForm').addEventListener('submit', async event => {
       event.preventDefault();
@@ -360,6 +363,18 @@
     window.SHG_AUTH_USER_EMAIL = '';
     window.SHG_AUTH_USER_NAME = '';
     location.reload();
+  };
+
+  window.shgShowLogin = ({ resetSession = false } = {}) => {
+    if (resetSession) {
+      session = null;
+      refreshPromise = null;
+      clearTimeout(refreshTimer);
+      localStorage.removeItem(SESSION_KEY);
+      localStorage.removeItem('shg-auth-login-email');
+      updateAuthIdentity(null);
+    }
+    initAuth(true);
   };
 
   window.addEventListener('online', () => {

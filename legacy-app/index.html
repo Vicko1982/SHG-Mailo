@@ -144,7 +144,7 @@
         <p id="authError" class="auth-error hidden"></p>
       </section>
     </div>
-    <script src="auth.js?v=262"></script>
+    <script src="auth.js?v=263"></script>
     <script src="vendor/supabase.js?v=21107"></script>
     <script src="remote-sync.js?v=262"></script>
     <script>
@@ -166,8 +166,12 @@
         };
         const showLogin = () => {
           document.querySelector('.app-shell')?.classList.add('hidden');
-          document.getElementById('authGate')?.classList.remove('hidden');
-          document.body.classList.add('auth-locked');
+          if (typeof window.shgShowLogin === 'function') {
+            window.shgShowLogin({ resetSession: true });
+          } else {
+            document.getElementById('authGate')?.classList.remove('hidden');
+            document.body.classList.add('auth-locked');
+          }
         };
         const showConnectionError = error => {
           console.error('Could not load current shared SHG data', error);
