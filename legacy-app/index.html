@@ -144,11 +144,12 @@
         <p id="authError" class="auth-error hidden"></p>
       </section>
     </div>
-    <script src="auth.js?v=261"></script>
+    <script src="auth.js?v=262"></script>
     <script src="vendor/supabase.js?v=21107"></script>
-    <script src="remote-sync.js?v=261"></script>
+    <script src="remote-sync.js?v=262"></script>
     <script>
       (async () => {
+        const STARTUP_TIMEOUT_MS = 30000;
         const loadScript = source => new Promise((resolve, reject) => {
           const script = document.createElement('script');
           script.src = source;
@@ -156,6 +157,28 @@
           script.onerror = reject;
           document.body.appendChild(script);
         });
+        const withStartupTimeout = (promise, message) => {
+          let timer;
+          const timeout = new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error(message)), STARTUP_TIMEOUT_MS);
+          });
+          return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+        };
+        const showLogin = () => {
+          document.querySelector('.app-shell')?.classList.add('hidden');
+          document.getElementById('authGate')?.classList.remove('hidden');
+          document.body.classList.add('auth-locked');
+        };
+        const showConnectionError = error => {
+          console.error('Could not load current shared SHG data', error);
+          document.querySelector('.app-shell')?.classList.add('hidden');
+          const gate = document.getElementById('authGate');
+          const card = gate?.querySelector('.auth-card');
+          const reason = String(error?.message || '').trim();
+          if (card) card.innerHTML = `<div class="auth-brand"><span>S</span><div><strong>Mailo</strong><small>Shared workspace</small></div></div><h1>Connection unavailable</h1><p>Mailo could not load the current shared database. No cached task data will be shown.</p>${reason ? `<p class="auth-error">${reason.replace(/[&<>"']/g, character => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[character]))}</p>` : ''}<button type="button" onclick="location.reload()">Try again</button>`;
+          gate?.classList.remove('hidden');
+          document.body.classList.add('auth-locked');
+        };
         const dataScripts = [
           'jira-tasks.js',
           'victor-main-filter.js',
@@ -164,10 +187,13 @@
         const loadStaticData = () => Promise.all(dataScripts.map(loadScript));
         let staticDataReady = Promise.resolve();
         const remoteDataReady = (async () => {
+          if (typeof window.SHG_AUTH_REQUIRED !== 'boolean' || typeof window.shgEnsureFreshSession !== 'function') {
+            throw new Error('The login service did not start correctly. Please reload the page.');
+          }
           if (!window.SHG_AUTH_REQUIRED) {
             staticDataReady = loadStaticData();
             try {
-              await window.shgEnsureFreshSession?.();
+              await window.shgEnsureFreshSession();
               await window.shgPrepareRemoteData?.();
             } catch (error) {
               console.error('Could not load shared SHG data', error);
@@ -175,16 +201,23 @@
             }
             return;
           }
-          const activeSession = await window.shgEnsureFreshSession?.().catch(() => null);
+          const activeSession = await window.shgEnsureFreshSession().catch(() => null);
           if (!activeSession) {
             window.SHG_WAITING_FOR_LOGIN = true;
+            showLogin();
             return;
+          }
+          if (typeof window.shgPrepareRemoteData !== 'function') {
+            throw new Error('The shared database service did not start correctly. Please reload the page.');
           }
           let lastError = null;
           for (let attempt = 0; attempt < 2; attempt += 1) {
             try {
-              await window.shgEnsureFreshSession?.();
-              const result = await window.shgPrepareRemoteData?.();
+              await window.shgEnsureFreshSession();
+              const result = await withStartupTimeout(
+                window.shgPrepareRemoteData(),
+                'The shared database took too long to respond. Please try again.',
+              );
               if (result?.remote) return;
               throw new Error('The shared database did not return current data.');
             } catch (error) {
@@ -197,12 +230,7 @@
         try {
           await Promise.all([staticDataReady, remoteDataReady]);
         } catch (error) {
-          console.error('Could not load current shared SHG data', error);
-          document.querySelector('.app-shell')?.classList.add('hidden');
-          const gate = document.getElementById('authGate');
-          const card = gate?.querySelector('.auth-card');
-          if (card) card.innerHTML = `<div class="auth-brand"><span>S</span><div><strong>Mailo</strong><small>Shared workspace</small></div></div><h1>Connection unavailable</h1><p>Mailo could not load the current shared database. No cached task data will be shown.</p><button type="button" onclick="location.reload()">Try again</button>`;
-          gate?.classList.remove('hidden');
+          showConnectionError(error);
           return;
         }
         if (window.SHG_WAITING_FOR_LOGIN) return;

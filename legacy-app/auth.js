@@ -372,5 +372,12 @@
     scheduleRefresh();
   });
   scheduleRefresh();
-  document.addEventListener('DOMContentLoaded', initAuth, { once: true });
+  // Cloudflare or a warm browser cache may execute this file after
+  // DOMContentLoaded. In that case, waiting for an event which has already
+  // fired leaves the application shell visible without either data or login.
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initAuth, { once: true });
+  } else {
+    initAuth();
+  }
 })();
