@@ -34,6 +34,21 @@
   // Tasks, comments and activity are safely reconstructed from Supabase. Saved
   // filters, column settings, personal preferences and the login session remain.
   clearReconstructableStorage();
+  // Older service workers cached dynamic database responses as if they were
+  // static files. Normal browser profiles accumulated those responses until the
+  // page became unresponsive; Private/Incognito windows started with an empty
+  // cache and therefore worked. Clear only MAILO application caches here so the
+  // recovery also runs before a user has completed login.
+  if ('caches' in window) {
+    caches.keys()
+      .then(keys => Promise.all(keys
+        .filter(key => key.startsWith('shg-task-manager-') && key !== 'shg-task-manager-v271')
+        .map(key => caches.delete(key))))
+      .catch(() => {});
+  }
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+    addEventListener('load', () => navigator.serviceWorker.register('./service-worker.js').catch(() => {}), { once: true });
+  }
   const SUPABASE_URL = 'https://ewjalucwaeotamodlajs.supabase.co';
   const SUPABASE_KEY = 'sb_publishable_XeGECEGDBFj1b0z-zyb2kQ_SdlTL2tG';
   const SESSION_KEY = 'shg-supabase-session';
