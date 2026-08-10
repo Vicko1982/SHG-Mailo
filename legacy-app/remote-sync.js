@@ -59,13 +59,16 @@
   }
 
   function taskForLocalCache(task) {
-    const clone = safeClone(task) || {};
-    if (!clone._supabaseId) return clone;
+    if (!task?._supabaseId) return safeClone(task) || {};
+    const { comments = [], ...withoutComments } = task;
+    const clone = safeClone(withoutComments) || {};
     // The shared database is the source of truth for synced comments. Keeping
     // thousands of them (and their attachments) in localStorage made normal
     // browser profiles stall while a clean Private/Incognito profile worked.
     // Retain only comments which have not reached the shared database yet.
-    clone.comments = (clone.comments || []).filter(comment => !comment._supabaseId);
+    clone.comments = comments
+      .filter(comment => !comment?._supabaseId)
+      .map(comment => safeClone(comment) || {});
     for (const comment of clone.comments) {
       if (!Array.isArray(comment.images)) continue;
       comment.images = comment.images.filter(source => !String(source || '').startsWith('data:'));
@@ -121,9 +124,11 @@
     }
   }
 
-  async function fetchAll(table, select = '*', extra = '') {
+  const yieldToBrowser = () => new Promise(resolve => setTimeout(resolve, 0));
+
+  async function fetchAll(table, select = '*', extra = '', options = {}) {
     const rows = [];
-    const size = 1000;
+    const size = Number(options.pageSize) || 1000;
     for (let start = 0; ; start += size) {
       const separator = extra ? `&${extra}` : '';
       let page;
@@ -137,6 +142,7 @@
       }
       rows.push(...page);
       if (page.length < size) return rows;
+      if (options.yieldBetweenPages) await yieldToBrowser();
     }
   }
 
@@ -149,13 +155,31 @@
   }
 
   function publicTask(task) {
-    const clone = safeClone(task) || {};
+    // Comments live in task_comments. Excluding them here prevents every chat
+    // message from duplicating the full history in tasks.legacy_data and from
+    // making the whole Task appear changed.
+    const { comments, ...metadata } = task || {};
+    const clone = safeClone(metadata) || {};
     delete clone._supabaseId;
     return clone;
   }
 
   function taskHash(task) {
-    return JSON.stringify(publicTask(task));
+    // Keep comments out of legacy_data, but retain a lightweight signature so a
+    // comment-only Save still triggers syncComments without hashing attachments.
+    const comments = (task?.comments || []).map(comment => [
+      comment?._supabaseId || comment?.id || '',
+      comment?.createdAt || '',
+      comment?.editedAt || comment?.updatedAt || '',
+      comment?.text || '',
+      Boolean(comment?.pending),
+      (comment?.images || []).length,
+      (comment?.attachments || []).map(file => [file?.name || '', file?.size || 0, file?.type || '']),
+      comment?.audioMessage ? [comment.audioMessage.duration || 0, String(comment.audioMessage.url || '').slice(-80), String(comment.audioMessage.data || '').length] : null,
+      comment?.scheduledAt || '',
+      comment?.scheduleStatus || '',
+    ]);
+    return JSON.stringify({ task: publicTask(task), comments });
   }
 
   function commentHash(comment) {
@@ -270,22 +294,30 @@
 
   async function hydrateRemoteComments(tasks) {
     const requestedAt = Date.now();
-    const rows = await fetchAll('task_comments', 'id,task_id,author_id,content,created_at,updated_at,legacy_data');
+    const rows = await fetchAll(
+      'task_comments',
+      'id,task_id,author_id,content,created_at,updated_at,legacy_data',
+      '',
+      { pageSize: 200, yieldBetweenPages: true },
+    );
     const byTask = new Map();
     cache.comments.clear();
     cache.commentHashes.clear();
-    for (const row of rows) {
+    for (let index = 0; index < rows.length; index += 1) {
+      const row = rows[index];
       const comment = commentFromRow(row);
       if (!byTask.has(row.task_id)) byTask.set(row.task_id, []);
       byTask.get(row.task_id).push(comment);
       cache.comments.set(row.id, { ...row, localId: comment.id });
       cache.commentHashes.set(row.id, commentHash(comment));
       lastCommentSyncAt = latestTimestamp(lastCommentSyncAt, row.updated_at || row.created_at);
+      if (index > 0 && index % 200 === 0) await yieldToBrowser();
     }
     for (const comments of byTask.values()) {
       comments.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
     }
-    for (const task of tasks) {
+    for (let index = 0; index < tasks.length; index += 1) {
+      const task = tasks[index];
       const remote = byTask.get(task._supabaseId) || [];
       const known = new Set(remote.map(comment => comment.id));
       const locallyNew = (task.comments || []).filter(comment => {
@@ -296,6 +328,7 @@
       task.comments = [...remote, ...locallyNew]
         .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
       if (task._supabaseId) cache.taskHashes.set(task._supabaseId, taskHash(task));
+      if (index > 0 && index % 100 === 0) await yieldToBrowser();
     }
     commentHistoryReady = true;
     writeTaskCache(tasks);
@@ -303,6 +336,50 @@
       detail: { tasks, comments: rows.length },
     }));
     return rows;
+  }
+
+  let deferredHistoryScheduled = false;
+
+  async function hydrateRemoteActivity() {
+    const rows = await fetchAll(
+      'activity_log',
+      'id,user_id,action,task_id,task_title,metadata,created_at,legacy_data,task:tasks(task_key)',
+      '',
+      { pageSize: 200, yieldBetweenPages: true },
+    );
+    const deferredActivity = [];
+    for (let index = 0; index < rows.length; index += 1) {
+      deferredActivity.push(activityFromRow(rows[index]));
+      if (index > 0 && index % 200 === 0) await yieldToBrowser();
+    }
+    window.SHG_REMOTE_BOOTSTRAP.activity = deferredActivity;
+    // Keep the complete history in memory for the Activity tab, but only a
+    // compact fallback in browser storage. Supabase remains the source of truth.
+    safeLocalSet(ACTIVITY_KEY, JSON.stringify(deferredActivity.slice(0, 250)));
+    cache.activityIds = new Set(deferredActivity.map(entry => entry.id));
+    window.dispatchEvent(new CustomEvent('shg:activity-ready', { detail: deferredActivity }));
+  }
+
+  function scheduleDeferredHistory(tasks) {
+    if (deferredHistoryScheduled) return;
+    deferredHistoryScheduled = true;
+    const start = () => {
+      hydrateRemoteComments(tasks)
+        .catch(error => {
+          console.warn('Task Chat history unavailable', error);
+          // Start from now when the historical request is temporarily unavailable.
+          // This prevents a fallback reconnect from replaying the whole table.
+          lastCommentSyncAt = new Date().toISOString();
+          commentHistoryReady = true;
+        })
+        .finally(() => startRealtimeComments());
+      const startActivity = () => hydrateRemoteActivity()
+        .catch(error => console.warn('Activity history unavailable', error));
+      if ('requestIdleCallback' in window) requestIdleCallback(startActivity, { timeout: 5000 });
+      else setTimeout(startActivity, 750);
+    };
+    if (window.SHG_APP_LOADED) start();
+    else window.addEventListener('shg:app-ready', start, { once: true });
   }
 
   async function loadRemoteData() {
@@ -458,30 +535,9 @@
     window.dispatchEvent(new CustomEvent('shg:remote-ready', {
       detail: { tasks: localTasks.length, comments: 'loading', spaces: spaces.length },
     }));
-    // Comments are intentionally hydrated after the workspace is interactive.
-    // This keeps authentication/permissions from waiting on the full chat history.
-    hydrateRemoteComments(localTasks)
-      .catch(error => {
-        console.warn('Task Chat history unavailable', error);
-        // Start from now when the historical request is temporarily unavailable.
-        // This prevents a fallback reconnect from replaying the whole table.
-        lastCommentSyncAt = new Date().toISOString();
-        commentHistoryReady = true;
-      })
-      .finally(() => startRealtimeComments());
-    // The activity history is not needed to paint the task workspace. Load it
-    // after the interactive shell is ready, then hydrate the Activity tab.
-    fetchAll('activity_log', 'id,user_id,action,task_id,task_title,metadata,created_at,legacy_data,task:tasks(task_key)')
-      .then(rows => {
-        const deferredActivity = rows.map(activityFromRow);
-        window.SHG_REMOTE_BOOTSTRAP.activity = deferredActivity;
-        // Keep the complete history in memory for the Activity tab, but only a
-        // compact fallback in browser storage. Supabase remains the source of truth.
-        safeLocalSet(ACTIVITY_KEY, JSON.stringify(deferredActivity.slice(0, 250)));
-        cache.activityIds = new Set(deferredActivity.map(entry => entry.id));
-        window.dispatchEvent(new CustomEvent('shg:activity-ready', { detail: deferredActivity }));
-      })
-      .catch(error => console.warn('Activity history unavailable', error));
+    // Full comment and activity history starts only after the interactive shell
+    // has painted, and yields between small batches to keep clicks responsive.
+    scheduleDeferredHistory(localTasks);
     if (pendingLocalTasks.length || tombstonedRemoteTasks.length) {
       setTimeout(() => syncTasks(localTasks, localActivity), 0);
     }

@@ -10,7 +10,10 @@
   const canRecordLastCheck64 = () => authenticatedUser64() === CURRENT_USER && isMainAdmin64(CURRENT_USER);
 
   function applyVersion64() {
-    document.querySelectorAll('#versionBadge,.version-badge').forEach(node => { node.textContent = `Version ${VERSION}`; });
+    const label = `Version ${VERSION}`;
+    document.querySelectorAll('#versionBadge,.version-badge').forEach(node => {
+      if (node.textContent !== label) node.textContent = label;
+    });
   }
 
   // Date of Creation is a first-class list column and uses the immutable task.created value.
@@ -242,5 +245,4 @@
 
   ensureWeeklyTab64(); rollWeeklyTasks64(); applyVersion64(); render();
   window.addEventListener('shg:remote-ready', () => { rollWeeklyTasks64(); applyVersion64(); render(); });
-  new MutationObserver(applyVersion64).observe(document.documentElement, { childList: true, subtree: true });
 })();

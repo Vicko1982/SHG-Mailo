@@ -42,12 +42,12 @@
   if ('caches' in window) {
     caches.keys()
       .then(keys => Promise.all(keys
-        .filter(key => key.startsWith('shg-task-manager-') && key !== 'shg-task-manager-v272')
+        .filter(key => key.startsWith('shg-task-manager-') && key !== 'shg-task-manager-v273')
         .map(key => caches.delete(key))))
       .catch(() => {});
   }
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-    addEventListener('load', () => navigator.serviceWorker.register('./service-worker.js').catch(() => {}), { once: true });
+    addEventListener('load', () => navigator.serviceWorker.register('./service-worker.js?v=273').catch(() => {}), { once: true });
   }
   const SUPABASE_URL = 'https://ewjalucwaeotamodlajs.supabase.co';
   const SUPABASE_KEY = 'sb_publishable_XeGECEGDBFj1b0z-zyb2kQ_SdlTL2tG';
@@ -112,6 +112,7 @@
 
   let session = readStoredSession();
   let pendingEmail = '';
+  try { pendingEmail = sessionStorage.getItem('shg-pending-auth-email') || ''; } catch {}
   let refreshPromise = null;
   let refreshTimer = null;
   let authHandlersBound = false;
@@ -188,6 +189,19 @@
     return session;
   }
 
+  function clearInvalidSession() {
+    session = null;
+    clearTimeout(refreshTimer);
+    try { localStorage.removeItem(SESSION_KEY); } catch {}
+    try { sessionStorage.removeItem(SESSION_KEY); } catch {}
+    updateAuthIdentity(null);
+    window.dispatchEvent(new CustomEvent('shg:auth-session', { detail: { session: null } }));
+  }
+
+  function isTerminalRefreshError(error) {
+    return [400, 401, 403].includes(Number(error?.status || 0));
+  }
+
   function scheduleRefresh(delayOverride = null) {
     clearTimeout(refreshTimer);
     if (!session?.refresh_token) return;
@@ -206,13 +220,25 @@
       return session;
     }
     if (!session?.refresh_token) return null;
+    const attemptedRefreshToken = session.refresh_token;
     try {
       const data = await authRequest('token?grant_type=refresh_token', {
-        refresh_token: session.refresh_token,
+        refresh_token: attemptedRefreshToken,
       });
       return storeSession(data);
     } catch (error) {
-      scheduleRefresh(REFRESH_RETRY_MS);
+      if (isTerminalRefreshError(error)) {
+        // Another tab may already have exchanged the same one-time refresh token.
+        // Never delete that newer valid session because an older request failed.
+        const newer = readStoredSession();
+        if (newer?.refresh_token && newer.refresh_token !== attemptedRefreshToken) {
+          session = newer;
+          updateAuthIdentity(session);
+          scheduleRefresh();
+          return session;
+        }
+        clearInvalidSession();
+      } else scheduleRefresh(REFRESH_RETRY_MS);
       throw error;
     }
   }
@@ -231,9 +257,10 @@
       if (newest) session = newest;
       return sessionIsFresh(session, minimumValidityMs) ? session : performRefresh();
     };
-    const refreshOperation = navigator.locks?.request
-      ? navigator.locks.request('mailo-auth-refresh', refresh)
-      : refresh()
+    // A queued Web Lock can outlive our timeout and leave a normal multi-tab
+    // browser profile apparently frozen. In-tab refreshPromise already provides
+    // the required serialization; Supabase remains the cross-tab authority.
+    const refreshOperation = refresh();
     refreshPromise = withTimeout(
       refreshOperation,
       AUTH_REFRESH_TIMEOUT_MS,
@@ -328,6 +355,7 @@
 
   function showError(message = '') {
     const element = document.getElementById('authError');
+    if (!element) return;
     element.textContent = message;
     element.classList.toggle('hidden', !message);
   }
@@ -341,12 +369,29 @@
   async function sendOtp(email) {
     const normalized = String(email || '').trim().toLowerCase();
     if (!normalized || !normalized.includes('@')) throw new Error('Enter a valid email address.');
-    await authRequest('otp', { email: normalized, create_user: false });
     pendingEmail = normalized;
+    try { sessionStorage.setItem('shg-pending-auth-email', normalized); } catch {}
     document.getElementById('authEmailForm').classList.add('hidden');
     document.getElementById('authOtpForm').classList.remove('hidden');
-    document.getElementById('authMessage').textContent = `We sent an 8-digit verification code to ${normalized}.`;
+    document.getElementById('authMessage').textContent = `Sending an 8-digit verification code to ${normalized}…`;
     document.getElementById('authOtp').focus();
+    try {
+      await authRequest('otp', { email: normalized, create_user: false });
+      document.getElementById('authMessage').textContent = `We sent an 8-digit verification code to ${normalized}.`;
+      return true;
+    } catch (error) {
+      // Supabase can enqueue and deliver the email even if the browser loses the
+      // tail end of the HTTP response. Keep the OTP form available in that case.
+      if (!error?.status || Number(error.status) >= 500) {
+        document.getElementById('authMessage').textContent = `If the code has arrived at ${normalized}, enter it below. Otherwise, send a new code.`;
+        return false;
+      }
+      pendingEmail = '';
+      try { sessionStorage.removeItem('shg-pending-auth-email'); } catch {}
+      document.getElementById('authOtpForm').classList.add('hidden');
+      document.getElementById('authEmailForm').classList.remove('hidden');
+      throw error;
+    }
   }
 
   async function submitLoginEmail() {
@@ -380,6 +425,11 @@
     }
     gate.classList.remove('hidden');
     document.body.classList.add('auth-locked');
+    if (pendingEmail) {
+      document.getElementById('authEmailForm').classList.add('hidden');
+      document.getElementById('authOtpForm').classList.remove('hidden');
+      document.getElementById('authMessage').textContent = `Enter the 8-digit verification code sent to ${pendingEmail}.`;
+    }
     if (authHandlersBound) return;
     authHandlersBound = true;
 
@@ -402,9 +452,17 @@
         const data = await authRequest('verify', { email: pendingEmail, token, type: 'email' });
         storeSession(data);
         try { localStorage.setItem('shg-auth-login-email', pendingEmail); } catch {}
-        const nextUrl = new URL(location.href);
-        nextUrl.searchParams.set('login', String(Date.now()));
-        location.replace(nextUrl.toString());
+        try { sessionStorage.removeItem('shg-pending-auth-email'); } catch {}
+        pendingEmail = '';
+        document.getElementById('authOtpForm')?.classList.add('hidden');
+        document.getElementById('authMessage').textContent = 'Signed in. Loading MAILO…';
+        if (typeof window.shgStartApplication === 'function') {
+          let started = await window.shgStartApplication();
+          // If verification happened while the initial signed-out startup check
+          // was still finishing, start once more with the newly verified session.
+          if (!started && !window.SHG_APP_LOADED) started = await window.shgStartApplication();
+          if (!started && !window.SHG_APP_LOADED) throw new Error('Mailo could not finish signing in. Please try again.');
+        } else throw new Error('The MAILO application did not start correctly. Please reload the page.');
       } catch (error) {
         showError(error.message);
       } finally {
@@ -417,8 +475,8 @@
       const button = document.getElementById('resendOtpBtn');
       setBusy(button, true, 'Sending…');
       try {
-        await sendOtp(pendingEmail);
-        document.getElementById('authMessage').textContent = `A new 8-digit code was sent to ${pendingEmail}.`;
+        const confirmed = await sendOtp(pendingEmail);
+        if (confirmed) document.getElementById('authMessage').textContent = `A new 8-digit code was sent to ${pendingEmail}.`;
       } catch (error) {
         showError(error.message);
       } finally {
@@ -428,6 +486,7 @@
 
     document.getElementById('changeAuthEmail').addEventListener('click', () => {
       pendingEmail = '';
+      try { sessionStorage.removeItem('shg-pending-auth-email'); } catch {}
       showError();
       document.getElementById('authOtp').value = '';
       document.getElementById('authOtpForm').classList.add('hidden');
@@ -447,6 +506,7 @@
     }
     localStorage.removeItem(SESSION_KEY);
     sessionStorage.removeItem(SESSION_KEY);
+    sessionStorage.removeItem('shg-pending-auth-email');
     localStorage.removeItem('shg-auth-login-email');
     localStorage.removeItem('shg-last-workspace-state');
     sessionStorage.removeItem('shg.impersonate');
@@ -462,6 +522,7 @@
       clearTimeout(refreshTimer);
       localStorage.removeItem(SESSION_KEY);
       sessionStorage.removeItem(SESSION_KEY);
+      sessionStorage.removeItem('shg-pending-auth-email');
       localStorage.removeItem('shg-auth-login-email');
       updateAuthIdentity(null);
     }

@@ -144,11 +144,17 @@
         <p id="authError" class="auth-error hidden"></p>
       </section>
     </div>
-    <script src="auth.js?v=272"></script>
+    <script src="auth.js?v=273"></script>
     <script src="vendor/supabase.js?v=21107"></script>
-    <script src="remote-sync.js?v=270"></script>
+    <script src="remote-sync.js?v=273"></script>
     <script>
-      (async () => {
+      (() => {
+        let applicationStartPromise = null;
+        window.shgStartApplication = () => {
+          if (window.SHG_APP_LOADED) return Promise.resolve(true);
+          if (applicationStartPromise) return applicationStartPromise;
+          window.SHG_WAITING_FOR_LOGIN = false;
+          applicationStartPromise = (async () => {
         const STARTUP_TIMEOUT_MS = 30000;
         const loadScript = source => new Promise((resolve, reject) => {
           const script = document.createElement('script');
@@ -239,22 +245,31 @@
           showConnectionError(error);
           return;
         }
-        if (window.SHG_WAITING_FOR_LOGIN) return;
-        await loadScript('app.js?v=270');
-        await loadScript('version-51.js?v=51');
-        await loadScript('version-52.js?v=52');
-        await loadScript('version-53.js?v=53');
-        await loadScript('version-54.js?v=54');
-        await loadScript('version-55.js?v=55');
-        await loadScript('version-56.js?v=56');
-        await loadScript('version-57.js?v=57');
-        await loadScript('version-58.js?v=58');
-        await loadScript('version-59.js?v=59');
-        await loadScript('version-60.js?v=61');
-        await loadScript('version-62.js?v=62');
-        await loadScript('version-63.js?v=63');
-        await loadScript('version-64.js?v=64');
-        window.SHG_APP_LOADED = true;
+        if (window.SHG_WAITING_FOR_LOGIN) return false;
+        try {
+          await loadScript('app.js?v=273');
+          await loadScript('version-51.js?v=51');
+          await loadScript('version-52.js?v=52');
+          await loadScript('version-53.js?v=53');
+          await loadScript('version-54.js?v=54');
+          await loadScript('version-55.js?v=55');
+          await loadScript('version-56.js?v=56');
+          await loadScript('version-57.js?v=57');
+          await loadScript('version-58.js?v=58');
+          await loadScript('version-59.js?v=59');
+          await loadScript('version-60.js?v=61');
+          await loadScript('version-62.js?v=62');
+          await loadScript('version-63.js?v=63');
+          await loadScript('version-64.js?v=273');
+          window.SHG_APP_LOADED = true;
+        } catch (error) {
+          showConnectionError(error);
+          return false;
+        }
+        document.querySelector('.app-shell')?.classList.remove('hidden');
+        document.getElementById('authGate')?.classList.add('hidden');
+        document.body.classList.remove('auth-locked');
+        window.dispatchEvent(new CustomEvent('shg:app-ready'));
         if (window.SHG_REMOTE_LOAD_ERROR && typeof window.toast === 'function') {
           window.toast(`The shared database is temporarily unavailable. Retrying automatically. ${window.SHG_REMOTE_LOAD_ERROR.message || ''}`.trim());
         }
@@ -263,6 +278,11 @@
             window.toast(event.detail?.message || 'The shared database could not save the latest change.');
           }
         });
+        return true;
+          })().finally(() => { applicationStartPromise = null; });
+          return applicationStartPromise;
+        };
+        window.shgStartApplication().catch(error => console.error('MAILO startup failed', error));
       })();
     </script>
     <script>
