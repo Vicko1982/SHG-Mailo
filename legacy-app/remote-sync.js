@@ -76,7 +76,15 @@
   }
 
   function writeTaskCache(tasks) {
-    return safeLocalSet(TASK_KEY, JSON.stringify((tasks || []).map(taskForLocalCache)));
+    const cachedTasks = (tasks || []).map(taskForLocalCache);
+    let payload = JSON.stringify(cachedTasks);
+    if (payload.length > 1200000) {
+      // Production always reloads synchronized tasks from Supabase. When the
+      // fallback cache grows too large, retain only unsynchronized work rather
+      // than filling browser storage and preventing authentication persistence.
+      payload = JSON.stringify(cachedTasks.filter(task => !task._supabaseId));
+    }
+    return safeLocalSet(TASK_KEY, payload);
   }
 
   function headers(extra = {}, accessToken = session()?.access_token || '') {
@@ -467,7 +475,9 @@
       .then(rows => {
         const deferredActivity = rows.map(activityFromRow);
         window.SHG_REMOTE_BOOTSTRAP.activity = deferredActivity;
-        safeLocalSet(ACTIVITY_KEY, JSON.stringify(deferredActivity));
+        // Keep the complete history in memory for the Activity tab, but only a
+        // compact fallback in browser storage. Supabase remains the source of truth.
+        safeLocalSet(ACTIVITY_KEY, JSON.stringify(deferredActivity.slice(0, 250)));
         cache.activityIds = new Set(deferredActivity.map(entry => entry.id));
         window.dispatchEvent(new CustomEvent('shg:activity-ready', { detail: deferredActivity }));
       })

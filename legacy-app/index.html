@@ -144,9 +144,9 @@
         <p id="authError" class="auth-error hidden"></p>
       </section>
     </div>
-    <script src="auth.js?v=264"></script>
+    <script src="auth.js?v=270"></script>
     <script src="vendor/supabase.js?v=21107"></script>
-    <script src="remote-sync.js?v=262"></script>
+    <script src="remote-sync.js?v=270"></script>
     <script>
       (async () => {
         const STARTUP_TIMEOUT_MS = 30000;
@@ -238,7 +238,7 @@
           return;
         }
         if (window.SHG_WAITING_FOR_LOGIN) return;
-        await loadScript('app.js?v=262');
+        await loadScript('app.js?v=270');
         await loadScript('version-51.js?v=51');
         await loadScript('version-52.js?v=52');
         await loadScript('version-53.js?v=53');

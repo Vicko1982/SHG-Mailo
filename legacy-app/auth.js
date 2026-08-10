@@ -1,16 +1,39 @@
 (() => {
-  // Version 63 recovery: discard only an oversized reconstructable Task cache.
-  // Saved filters and all user preferences remain untouched.
-  try {
-    const cachedTasks = localStorage.getItem('shg-tasks-v5');
-    if (cachedTasks && cachedTasks.length > 1500000) localStorage.removeItem('shg-tasks-v5');
-    const workspace = localStorage.getItem('shg-last-workspace-state');
-    if (workspace && workspace.length > 250000) localStorage.removeItem('shg-last-workspace-state');
-    localStorage.setItem('mailo-browser-recovery-v63', 'complete');
-  } catch (error) {
-    try { localStorage.removeItem('shg-tasks-v5'); } catch {}
-    console.warn('MAILO browser cache recovery applied', error);
+  const RECONSTRUCTABLE_STORAGE = {
+    'shg-tasks-v5': 1200000,
+    'shg-activity-log': 500000,
+    'shg-last-workspace-state': 250000,
+  };
+  const STORAGE_PRESSURE_LIMIT = 3500000;
+
+  function localStorageSize() {
+    let size = 0;
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index) || '';
+      size += key.length + (localStorage.getItem(key)?.length || 0);
+    }
+    return size;
   }
+
+  function clearReconstructableStorage(force = false) {
+    try {
+      const underPressure = force || localStorageSize() > STORAGE_PRESSURE_LIMIT;
+      for (const [key, maximumLength] of Object.entries(RECONSTRUCTABLE_STORAGE)) {
+        const value = localStorage.getItem(key);
+        if (value && (underPressure || value.length > maximumLength)) localStorage.removeItem(key);
+      }
+      try { localStorage.setItem('mailo-browser-recovery-v70', 'complete'); } catch {}
+    } catch (error) {
+      for (const key of Object.keys(RECONSTRUCTABLE_STORAGE)) {
+        try { localStorage.removeItem(key); } catch {}
+      }
+      console.warn('MAILO browser cache recovery applied', error);
+    }
+  }
+
+  // Tasks, comments and activity are safely reconstructed from Supabase. Saved
+  // filters, column settings, personal preferences and the login session remain.
+  clearReconstructableStorage();
   const SUPABASE_URL = 'https://ewjalucwaeotamodlajs.supabase.co';
   const SUPABASE_KEY = 'sb_publishable_XeGECEGDBFj1b0z-zyb2kQ_SdlTL2tG';
   const SESSION_KEY = 'shg-supabase-session';
@@ -106,9 +129,32 @@
   }
 
   function storeSession(value) {
-    session = normalizeSession(value, session);
-    localStorage.setItem(SESSION_KEY, JSON.stringify(session));
-    updateAuthIdentity(session);
+    const nextSession = normalizeSession(value, session);
+    if (!nextSession?.access_token || !nextSession?.user?.email) {
+      throw new Error('The authentication service returned an incomplete login session. Please try again.');
+    }
+    const payload = JSON.stringify(nextSession);
+    const persist = () => {
+      localStorage.setItem(SESSION_KEY, payload);
+      const verified = readStoredSession();
+      if (!verified || verified.access_token !== nextSession.access_token || verified.user.email !== nextSession.user.email) {
+        throw new Error('The browser did not save the login session correctly.');
+      }
+    };
+    try {
+      persist();
+    } catch (firstError) {
+      // A full normal browser profile is the common cause of the OTP loop.
+      // Purge only data which Supabase can recreate, then retry once.
+      clearReconstructableStorage(true);
+      try {
+        persist();
+      } catch (secondError) {
+        throw new Error('MAILO could not save your login session in this browser. Please free a little website storage and try again.');
+      }
+    }
+    session = nextSession;
+    updateAuthIdentity(nextSession);
     window.dispatchEvent(new CustomEvent('shg:auth-session', { detail: { session } }));
     scheduleRefresh();
     return session;
@@ -327,8 +373,10 @@
       try {
         const data = await authRequest('verify', { email: pendingEmail, token, type: 'email' });
         storeSession(data);
-        localStorage.setItem('shg-auth-login-email', pendingEmail);
-        location.reload();
+        try { localStorage.setItem('shg-auth-login-email', pendingEmail); } catch {}
+        const nextUrl = new URL(location.href);
+        nextUrl.searchParams.set('login', String(Date.now()));
+        location.replace(nextUrl.toString());
       } catch (error) {
         showError(error.message);
       } finally {
