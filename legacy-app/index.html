@@ -219,6 +219,7 @@
         await loadScript('version-60.js?v=61');
         await loadScript('version-62.js?v=62');
         await loadScript('version-63.js?v=63');
+        await loadScript('version-64.js?v=64');
         window.SHG_APP_LOADED = true;
         if (window.SHG_REMOTE_LOAD_ERROR && typeof window.toast === 'function') {
           window.toast(`The shared database is temporarily unavailable. Retrying automatically. ${window.SHG_REMOTE_LOAD_ERROR.message || ''}`.trim());
