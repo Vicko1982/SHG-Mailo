@@ -275,6 +275,28 @@
     document.getElementById('authOtp').focus();
   }
 
+  async function submitLoginEmail() {
+    showError();
+    const button = document.getElementById('sendOtpBtn');
+    if (!button || button.disabled) return;
+    const emailInput = document.getElementById('authEmail');
+    const email = String(emailInput?.value || '').trim();
+    if (!emailInput?.checkValidity()) {
+      emailInput?.reportValidity();
+      return;
+    }
+    setBusy(button, true, 'Sending…');
+    try {
+      await sendOtp(email);
+    } catch (error) {
+      showError(error.message || 'The verification code could not be sent. Please try again.');
+    } finally {
+      setBusy(button, false);
+    }
+  }
+
+  window.shgSubmitLoginEmail = submitLoginEmail;
+
   function initAuth(forceLogin = false) {
     const gate = document.getElementById('authGate');
     if (!AUTH_REQUIRED || (session && !forceLogin)) {
@@ -289,16 +311,7 @@
 
     document.getElementById('authEmailForm').addEventListener('submit', async event => {
       event.preventDefault();
-      showError();
-      const button = document.getElementById('sendOtpBtn');
-      setBusy(button, true, 'Sending…');
-      try {
-        await sendOtp(document.getElementById('authEmail').value);
-      } catch (error) {
-        showError(error.message);
-      } finally {
-        setBusy(button, false);
-      }
+      await submitLoginEmail();
     });
 
     document.getElementById('authOtpForm').addEventListener('submit', async event => {

@@ -132,7 +132,7 @@
         <form id="authEmailForm">
           <label for="authEmail">Email</label>
           <input id="authEmail" type="email" autocomplete="email" required placeholder="name@shd.global" />
-          <button id="sendOtpBtn" type="submit">Send verification code</button>
+          <button id="sendOtpBtn" type="button" onclick="window.shgSubmitLoginEmail?.()">Send verification code</button>
         </form>
         <form id="authOtpForm" class="hidden">
           <button id="changeAuthEmail" class="auth-back" type="button">← Change email</button>
@@ -144,7 +144,7 @@
         <p id="authError" class="auth-error hidden"></p>
       </section>
     </div>
-    <script src="auth.js?v=263"></script>
+    <script src="auth.js?v=264"></script>
     <script src="vendor/supabase.js?v=21107"></script>
     <script src="remote-sync.js?v=262"></script>
     <script>
