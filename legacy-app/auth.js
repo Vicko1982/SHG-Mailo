@@ -42,7 +42,7 @@
   if ('caches' in window) {
     caches.keys()
       .then(keys => Promise.all(keys
-        .filter(key => key.startsWith('shg-task-manager-') && key !== 'shg-task-manager-v271')
+        .filter(key => key.startsWith('shg-task-manager-') && key !== 'shg-task-manager-v272')
         .map(key => caches.delete(key))))
       .catch(() => {});
   }
@@ -75,14 +75,24 @@
     'victor@shd.global': 'Victor Stavropoulos',
   };
 
-  function readStoredSession() {
+  function readSessionFrom(storage) {
     try {
-      const session = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null');
-      if (!session?.access_token || !session?.user?.email) return null;
-      return session;
+      const value = JSON.parse(storage.getItem(SESSION_KEY) || 'null');
+      if (!value?.access_token || !value?.user?.email) return null;
+      return value;
     } catch {
       return null;
     }
+  }
+
+  function readStoredSession() {
+    const durable = readSessionFrom(localStorage);
+    const tab = readSessionFrom(sessionStorage);
+    if (!durable) return tab;
+    if (!tab) return durable;
+    const durableSavedAt = Number(durable._mailo_saved_at || durable.expires_at || 0);
+    const tabSavedAt = Number(tab._mailo_saved_at || tab.expires_at || 0);
+    return tabSavedAt > durableSavedAt ? tab : durable;
   }
 
   function sessionIsFresh(value, minimumValidityMs = 0) {
@@ -144,29 +154,32 @@
   }
 
   function storeSession(value) {
-    const nextSession = normalizeSession(value, session);
+    const nextSession = { ...normalizeSession(value, session), _mailo_saved_at: Date.now() };
     if (!nextSession?.access_token || !nextSession?.user?.email) {
       throw new Error('The authentication service returned an incomplete login session. Please try again.');
     }
     const payload = JSON.stringify(nextSession);
-    const persist = () => {
-      localStorage.setItem(SESSION_KEY, payload);
-      const verified = readStoredSession();
+    const persistTo = storage => {
+      storage.setItem(SESSION_KEY, payload);
+      const verified = readSessionFrom(storage);
       if (!verified || verified.access_token !== nextSession.access_token || verified.user.email !== nextSession.user.email) {
         throw new Error('The browser did not save the login session correctly.');
       }
+      return true;
     };
+    let durableSaved = false;
+    let tabSaved = false;
+    try { tabSaved = persistTo(sessionStorage); } catch {}
     try {
-      persist();
+      durableSaved = persistTo(localStorage);
     } catch (firstError) {
       // A full normal browser profile is the common cause of the OTP loop.
       // Purge only data which Supabase can recreate, then retry once.
       clearReconstructableStorage(true);
-      try {
-        persist();
-      } catch (secondError) {
-        throw new Error('MAILO could not save your login session in this browser. Please free a little website storage and try again.');
-      }
+      try { durableSaved = persistTo(localStorage); } catch {}
+    }
+    if (!durableSaved && !tabSaved) {
+      throw new Error('MAILO could not save your login session in this browser. Please free a little website storage and try again.');
     }
     session = nextSession;
     updateAuthIdentity(nextSession);
@@ -433,6 +446,7 @@
       }).catch(() => {});
     }
     localStorage.removeItem(SESSION_KEY);
+    sessionStorage.removeItem(SESSION_KEY);
     localStorage.removeItem('shg-auth-login-email');
     localStorage.removeItem('shg-last-workspace-state');
     sessionStorage.removeItem('shg.impersonate');
@@ -447,6 +461,7 @@
       refreshPromise = null;
       clearTimeout(refreshTimer);
       localStorage.removeItem(SESSION_KEY);
+      sessionStorage.removeItem(SESSION_KEY);
       localStorage.removeItem('shg-auth-login-email');
       updateAuthIdentity(null);
     }
