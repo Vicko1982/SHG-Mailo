@@ -1,6 +1,6 @@
-/* MAILO Version 64 — duplicate finder, Main Admin last checks, weekly tasks and creation date. */
+/* MAILO Version 74 — hierarchy-safe duplicate ranking and cumulative task workflows. */
 (() => {
-  const VERSION = 64;
+  const VERSION = 74;
   const VICTOR = 'Victor Stavropoulos';
 
   const authenticatedUser64 = () => String(window.SHG_AUTH_USER_NAME || (typeof SESSION_USER !== 'undefined' ? SESSION_USER : '') || '').trim();
@@ -188,7 +188,36 @@
   hierarchicalListRows = function version64Hierarchy(rows) {
     const output = priorHierarchy64(rows);
     if (!state.duplicateMode64) return output;
-    return [...output].sort((a, b) => (state.duplicateScores64.get(b.id) || 0) - (state.duplicateScores64.get(a.id) || 0));
+
+    // Duplicate ranking must move a complete hierarchy branch as one unit.
+    // Sorting the flattened output directly can place a matching child above
+    // its parent and can leave the parent's expand control on a different page.
+    const rowById = new Map(rows.map(row => [row.id, row]));
+    const branchScoreByRoot = new Map();
+    for (const row of rows) {
+      let root = row;
+      const visited = new Set([row.id]);
+      while (root.parent && rowById.has(root.parent) && !visited.has(root.parent)) {
+        root = rowById.get(root.parent);
+        visited.add(root.id);
+      }
+      const score = state.duplicateScores64.get(row.id) || 0;
+      branchScoreByRoot.set(root.id, Math.max(branchScoreByRoot.get(root.id) || 0, score));
+    }
+
+    const branches = [];
+    for (const row of output) {
+      if (!branches.length || Number(row.treeDepth || 0) === 0) {
+        branches.push({ rootId: row.id, rows: [row], originalIndex: branches.length });
+      } else {
+        branches[branches.length - 1].rows.push(row);
+      }
+    }
+    branches.sort((a, b) =>
+      (branchScoreByRoot.get(b.rootId) || 0) - (branchScoreByRoot.get(a.rootId) || 0)
+      || a.originalIndex - b.originalIndex
+    );
+    return branches.flatMap(branch => branch.rows);
   };
 
   window.toggleWeeklyTasks64 = () => { state.weeklyMode64 = !state.weeklyMode64; state.taskPage = 1; render(); };

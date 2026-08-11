@@ -47,7 +47,7 @@
       .catch(() => {});
   }
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-    addEventListener('load', () => navigator.serviceWorker.register('./service-worker.js?v=273').catch(() => {}), { once: true });
+    addEventListener('load', () => navigator.serviceWorker.register('./service-worker.js?v=274').catch(() => {}), { once: true });
   }
   const SUPABASE_URL = 'https://ewjalucwaeotamodlajs.supabase.co';
   const SUPABASE_KEY = 'sb_publishable_XeGECEGDBFj1b0z-zyb2kQ_SdlTL2tG';
