@@ -42,12 +42,12 @@
   if ('caches' in window) {
     caches.keys()
       .then(keys => Promise.all(keys
-        .filter(key => key.startsWith('shg-task-manager-') && key !== 'shg-task-manager-v273')
+        .filter(key => key.startsWith('shg-task-manager-') && key !== 'shg-task-manager-v275')
         .map(key => caches.delete(key))))
       .catch(() => {});
   }
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-    addEventListener('load', () => navigator.serviceWorker.register('./service-worker.js?v=274').catch(() => {}), { once: true });
+    addEventListener('load', () => navigator.serviceWorker.register('./service-worker.js?v=275').catch(() => {}), { once: true });
   }
   const SUPABASE_URL = 'https://ewjalucwaeotamodlajs.supabase.co';
   const SUPABASE_KEY = 'sb_publishable_XeGECEGDBFj1b0z-zyb2kQ_SdlTL2tG';

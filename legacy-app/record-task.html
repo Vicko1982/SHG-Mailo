@@ -1,1 +1,95 @@
-<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#10233f"><title>Mailo Voice Recorder</title><link rel="stylesheet" href="styles.css?v=250"><link rel="stylesheet" href="record-task.css?v=250"></head><body class="recorder-body"><main class="app-shell recorder-shell"><section class="recorder-card"><img src="icons/mailo-logo.jpeg" alt="Mailo"><p class="eyebrow">MAILO VOICE RECORDER · VERSION 50</p><h1>Record one Task</h1><p id="recorderStatus">Press the microphone, speak naturally, then press it again.</p><button id="recordButton" class="record-button" type="button" aria-label="Start recording">●</button><div id="recordingTimer">00:00</div><form id="recordDraft" class="recorder-draft hidden"><div class="recorder-grid"><label>Type<select name="type"><option value="task">Task</option><option value="mini_task">Mini Task</option></select></label><label>Space<select name="space"></select></label><label class="wide">Title<input name="title" required></label><label>Assignee<select name="assignee"></select></label><label>Supervisor<select name="supervisor"></select></label><label>Priority<select name="priority"><option>Highest</option><option>High</option><option selected>Medium</option><option>Low</option><option>Lowest</option></select></label><label>Due Date<input name="dueDate" type="date"></label><label class="wide">Description<textarea name="description"></textarea></label></div><details><summary>Transcript</summary><p id="recordTranscript"></p></details><div id="recordWarnings" class="record-warnings"></div><div class="record-actions"><button id="discardRecording" type="button">Discard</button><button class="create-record-task" type="submit">Create Task</button></div></form><a href="./">Return to Mailo</a></section></main><div id="authGate" class="auth-gate hidden" aria-live="polite"><section class="auth-card" aria-labelledby="authTitle"><div class="auth-brand"><span>S</span><div><strong>Mailo</strong><small>Voice Recorder</small></div></div><h1 id="authTitle">Sign in</h1><p id="authMessage">Enter your company email and we will send you an 8-digit verification code.</p><form id="authEmailForm"><label for="authEmail">Email</label><input id="authEmail" type="email" autocomplete="email" required><button id="sendOtpBtn" type="submit">Send verification code</button></form><form id="authOtpForm" class="hidden"><button id="changeAuthEmail" class="auth-back" type="button">← Change email</button><label for="authOtp">8-digit code</label><input id="authOtp" inputmode="numeric" autocomplete="one-time-code" minlength="8" maxlength="8" required><button id="verifyOtpBtn" type="submit">Verify and sign in</button><button id="resendOtpBtn" class="auth-secondary" type="button">Send a new code</button></form><p id="authError" class="auth-error hidden"></p></section></div><script src="auth.js?v=250"></script><script src="record-task.js?v=250"></script></body></html>
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#10233f" />
+    <title>Mailo Voice Recorder</title>
+    <link rel="stylesheet" href="styles.css?v=250" />
+    <link rel="stylesheet" href="record-task.css?v=250" />
+  </head>
+  <body class="recorder-body">
+    <main class="app-shell recorder-shell">
+      <section class="recorder-card">
+        <img src="icons/mailo-logo.jpeg" alt="Mailo" />
+        <p class="eyebrow">MAILO VOICE RECORDER · VERSION 75</p>
+        <h1>Record one Task</h1>
+        <p id="recorderStatus">Press the microphone, speak naturally, then press it again.</p>
+        <button id="recordButton" class="record-button" type="button" aria-label="Start recording">
+          ●
+        </button>
+        <div id="recordingTimer">00:00</div>
+        <form id="recordDraft" class="recorder-draft hidden">
+          <div class="recorder-grid">
+            <label
+              >Type<select name="type">
+                <option value="task">Task</option>
+                <option value="mini_task">Mini Task</option>
+              </select></label
+            ><label>Space<select name="space"></select></label
+            ><label class="wide">Title<input name="title" required /></label
+            ><label>Assignee<select name="assignee"></select></label
+            ><label>Supervisor<select name="supervisor"></select></label
+            ><label
+              >Priority<select name="priority">
+                <option>Highest</option>
+                <option>High</option>
+                <option selected>Medium</option>
+                <option>Low</option>
+                <option>Lowest</option>
+              </select></label
+            ><label>Due Date<input name="dueDate" type="date" /></label
+            ><label class="wide">Description<textarea name="description"></textarea></label>
+          </div>
+          <details>
+            <summary>Transcript</summary>
+            <p id="recordTranscript"></p>
+          </details>
+          <div id="recordWarnings" class="record-warnings"></div>
+          <div class="record-actions">
+            <button id="discardRecording" type="button">Discard</button
+            ><button class="create-record-task" type="submit">Create Task</button>
+          </div>
+        </form>
+        <a href="./">Return to Mailo</a>
+      </section>
+    </main>
+    <div id="authGate" class="auth-gate hidden" aria-live="polite">
+      <section class="auth-card" aria-labelledby="authTitle">
+        <div class="auth-brand">
+          <span>S</span>
+          <div><strong>Mailo</strong><small>Voice Recorder</small></div>
+        </div>
+        <h1 id="authTitle">Sign in</h1>
+        <p id="authMessage">
+          Enter your company email and we will send you an 8-digit verification code.
+        </p>
+        <form id="authEmailForm">
+          <label for="authEmail">Email</label
+          ><input id="authEmail" type="email" autocomplete="email" required /><button
+            id="sendOtpBtn"
+            type="submit"
+          >
+            Send verification code
+          </button>
+        </form>
+        <form id="authOtpForm" class="hidden">
+          <button id="changeAuthEmail" class="auth-back" type="button">← Change email</button
+          ><label for="authOtp">8-digit code</label
+          ><input
+            id="authOtp"
+            inputmode="numeric"
+            autocomplete="one-time-code"
+            minlength="8"
+            maxlength="8"
+            required
+          /><button id="verifyOtpBtn" type="submit">Verify and sign in</button
+          ><button id="resendOtpBtn" class="auth-secondary" type="button">Send a new code</button>
+        </form>
+        <p id="authError" class="auth-error hidden"></p>
+      </section>
+    </div>
+    <script src="auth.js?v=275"></script>
+    <script src="record-task.js?v=275"></script>
+  </body>
+</html>

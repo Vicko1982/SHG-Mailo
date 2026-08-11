@@ -17,6 +17,7 @@
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="styles.css?v=262" />
     <link rel="stylesheet" href="version-63.css?v=63" />
+    <link rel="stylesheet" href="version-75.css?v=275" />
   </head>
   <body>
     <div class="app-shell">
@@ -52,7 +53,7 @@
         </div>
         <button id="sidebarUserButton" class="sidebar-footer" type="button" aria-haspopup="menu" aria-expanded="false">
           <div id="currentUserAvatar" class="avatar">…</div>
-          <div class="user-meta"><strong id="currentUserName">Loading user…</strong><span id="roleLabel">Loading permissions…</span><small class="version-badge">Version 64</small></div>
+          <div class="user-meta"><strong id="currentUserName">Loading user…</strong><span id="roleLabel">Loading permissions…</span><small class="version-badge">Version 75</small></div>
           <span class="dots" aria-hidden="true">•••</span>
         </button>
       </aside>
@@ -261,6 +262,7 @@
           await loadScript('version-62.js?v=62');
           await loadScript('version-63.js?v=63');
           await loadScript('version-64.js?v=274');
+          await loadScript('version-75.js?v=275');
           window.SHG_APP_LOADED = true;
         } catch (error) {
           showConnectionError(error);

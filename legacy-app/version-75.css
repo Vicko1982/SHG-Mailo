@@ -1,0 +1,14 @@
+.transcribe63.recording75 {
+  background: #16a34a !important;
+  border-color: #15803d !important;
+  color: #fff !important;
+  box-shadow: 0 0 0 3px rgb(22 163 74 / 18%);
+}
+
+.transcribe63.processing75 {
+  background: #dc2626 !important;
+  border-color: #b91c1c !important;
+  color: #fff !important;
+  cursor: wait;
+  opacity: 1;
+}
