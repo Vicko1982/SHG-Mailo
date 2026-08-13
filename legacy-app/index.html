@@ -20,6 +20,7 @@
     <link rel="stylesheet" href="version-75.css?v=275" />
     <link rel="stylesheet" href="version-76-core.css?v=276" />
     <link rel="stylesheet" href="version-76-chat.css?v=276" />
+    <link rel="stylesheet" href="version-77.css?v=277" />
   </head>
   <body>
     <div class="app-shell">
@@ -55,7 +56,7 @@
         </div>
         <button id="sidebarUserButton" class="sidebar-footer" type="button" aria-haspopup="menu" aria-expanded="false">
           <div id="currentUserAvatar" class="avatar">…</div>
-          <div class="user-meta"><strong id="currentUserName">Loading user…</strong><span id="roleLabel">Loading permissions…</span><small class="version-badge">Version 76</small></div>
+          <div class="user-meta"><strong id="currentUserName">Loading user…</strong><span id="roleLabel">Loading permissions…</span><small class="version-badge">Version 77</small></div>
           <span class="dots" aria-hidden="true">•••</span>
         </button>
       </aside>
@@ -147,9 +148,9 @@
         <p id="authError" class="auth-error hidden"></p>
       </section>
     </div>
-    <script src="auth.js?v=276"></script>
+    <script src="auth.js?v=277"></script>
     <script src="vendor/supabase.js?v=21107"></script>
-    <script src="remote-sync.js?v=276"></script>
+    <script src="remote-sync.js?v=277"></script>
     <script>
       (() => {
         let applicationStartPromise = null;
@@ -250,9 +251,9 @@
         }
         if (window.SHG_WAITING_FOR_LOGIN) return false;
         try {
-          await loadScript('app.js?v=276');
+          await loadScript('app.js?v=277');
           await loadScript('version-51.js?v=51');
-          await loadScript('version-52.js?v=52');
+          await loadScript('version-52.js?v=277');
           await loadScript('version-53.js?v=53');
           await loadScript('version-54.js?v=54');
           await loadScript('version-55.js?v=55');
@@ -269,9 +270,10 @@
           await loadScript('version-76-core.js?v=276');
           await loadScript('version-76-admin.js?v=276');
           await loadScript('version-76-chat.js?v=276');
+          await loadScript('version-77.js?v=277');
           // app.js performs its initial paint before the version wrappers are
           // installed. Run one definitive paint now that the complete Version
-          // 76 behavior and access policy are active.
+          // 77 behavior and access policy are active.
           window.render?.();
           const linkedTaskId = String(window.SHG_PENDING_LINKED_TASK_ID || '').trim();
           if (linkedTaskId) {

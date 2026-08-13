@@ -17,8 +17,11 @@
     commentHashes: new Map(),
     profiles: new Map(),
     profileIdsByName: new Map(),
+    rolesByProfileId: new Map(),
     spaces: new Map(),
     spaceIdsByKey: new Map(),
+    taskCreatedByIds: new Map(),
+    taskCreatorNames: new Map(),
     activityIds: new Set(),
     ready: false,
     syncing: false,
@@ -102,6 +105,7 @@
       apikey: window.SHG_SUPABASE_KEY,
       Authorization: `Bearer ${accessToken}`,
       'Content-Type': 'application/json',
+      'X-Mailo-Version': '77',
       ...extra,
     };
   }
@@ -455,6 +459,14 @@
       cache.profiles.set(profile.id, profile);
       if (profile.full_name) cache.profileIdsByName.set(normalizedName(profile.full_name), profile.id);
     }
+    cache.rolesByProfileId.clear();
+    const roleRank = { user: 1, admin: 2, main_admin: 3 };
+    for (const row of roles) {
+      const current = cache.rolesByProfileId.get(row.user_id);
+      if ((roleRank[row.role] || 0) >= (roleRank[current] || 0)) {
+        cache.rolesByProfileId.set(row.user_id, row.role);
+      }
+    }
 
     cache.spaces.clear();
     cache.spaceIdsByKey.clear();
@@ -491,8 +503,14 @@
     for (const task of rawPendingLocalTasks) {
       if (deletedTaskKeys.has(task.id)) continue;
       if (!task.id || remoteTaskKeys.has(task.id)) continue;
-      if (normalizedName(task.creator) !== normalizedName(currentProfileName)) continue;
-      if (!cache.spaceIdsByKey.has(task.project)) continue;
+      const pendingSpaceId = cache.spaceIdsByKey.get(task.project);
+      if (!pendingSpaceId) continue;
+      const requestedCreatorId = profileId(task.creator);
+      const authenticatedId = session()?.user?.id || null;
+      const mayResumeViewAsCreation = authenticatedCanCreateForOthers()
+        && requestedCreatorId
+        && (!isPersonalSpaceId(pendingSpaceId) || currentProfileName === 'Victor Stavropoulos');
+      if (requestedCreatorId !== authenticatedId && !mayResumeViewAsCreation) continue;
       const previous = pendingByKey.get(task.id);
       const previousUpdated = new Date(previous?.updated || previous?.createdAt || 0).getTime();
       const taskUpdated = new Date(task.updated || task.createdAt || 0).getTime();
@@ -504,10 +522,15 @@
     }
     cache.tasks.clear();
     cache.taskHashes.clear();
-    for (const task of allRemoteTasks) {
+    cache.taskCreatedByIds.clear();
+    cache.taskCreatorNames.clear();
+    for (const [index, task] of allRemoteTasks.entries()) {
       if (!task._supabaseId) continue;
+      const row = tasks[index];
       cache.tasks.set(task._supabaseId, task);
       cache.taskHashes.set(task._supabaseId, taskHash(task));
+      cache.taskCreatedByIds.set(task._supabaseId, row?.created_by_id || null);
+      cache.taskCreatorNames.set(task._supabaseId, task.creator || '');
     }
 
     const sharedDefinitions = Object.fromEntries(
@@ -688,11 +711,58 @@
     return `${match[1]}-${Number(match[2]) + 1}`;
   }
 
-  function taskPayload(task) {
+  function isPersonalSpaceId(spaceId) {
+    const space = cache.spaces.get(spaceId);
+    return Boolean(space && (space.key === 'PER' || space.type === 'personal'));
+  }
+
+  function authenticatedCanCreateForOthers() {
+    const userId = session()?.user?.id || '';
+    return cache.rolesByProfileId.get(userId) === 'main_admin'
+      || profileName(userId) === 'Victor Stavropoulos';
+  }
+
+  function creatorIdForTaskPayload(task, spaceId, isInsert) {
+    const authenticatedId = session()?.user?.id || null;
+    const authenticatedName = profileName(authenticatedId);
+    const requestedId = profileId(task.creator);
+    const canCreateForOthers = authenticatedCanCreateForOthers();
+    const isPersonal = isPersonalSpaceId(spaceId);
+    const isVictor = authenticatedName === 'Victor Stavropoulos';
+
+    if (!isInsert) {
+      const hasPreviousId = cache.taskCreatedByIds.has(task._supabaseId);
+      const previousId = cache.taskCreatedByIds.get(task._supabaseId) || null;
+      const previousName = cache.taskCreatorNames.get(task._supabaseId) || '';
+      const creatorChanged = normalizedName(task.creator) !== normalizedName(previousName);
+
+      if (!creatorChanged) return hasPreviousId ? previousId : (requestedId || authenticatedId);
+      if (canCreateForOthers && requestedId && (!isPersonal || isVictor)) return requestedId;
+
+      // A regular Task edit must never silently rewrite the Creator because a
+      // stale View As identity or an old local cache supplied another name.
+      // Restore the server-backed display value and keep its authority UUID.
+      task.creator = previousName || authenticatedName || task.creator;
+      return previousId || authenticatedId;
+    }
+
+    const mayUseRequestedCreator = requestedId
+      && (requestedId === authenticatedId || (canCreateForOthers && (!isPersonal || isVictor)));
+    if (mayUseRequestedCreator) return requestedId;
+
+    // RLS binds ordinary creation to the authenticated Supabase account. This
+    // also repairs stale CURRENT_USER/View As values instead of repeatedly
+    // retrying an insert which the database must reject.
+    if (authenticatedName) task.creator = authenticatedName;
+    return authenticatedId;
+  }
+
+  function taskPayload(task, isInsert = false) {
+    const spaceId = cache.spaceIdsByKey.get(task.project);
     return {
       task_key: task.id,
       title: String(task.title || task.id),
-      space_id: cache.spaceIdsByKey.get(task.project),
+      space_id: spaceId,
       status: task.status || 'backlog',
       jira_status: task.jiraStatus || null,
       priority: task.priority || null,
@@ -709,7 +779,7 @@
       last_status_changed_at: task.lastStatusChangedAt || task.created || new Date().toISOString(),
       labels: Array.isArray(task.labels) ? task.labels : [],
       cancellation_reason: task.cancellationReason || null,
-      created_by_id: profileId(task.creator) || session()?.user?.id || null,
+      created_by_id: creatorIdForTaskPayload(task, spaceId, isInsert),
       audit: Array.isArray(task.audit) ? task.audit : [],
       is_mini_task: Boolean(task.isMiniTask),
       manual_order: null,
@@ -719,10 +789,16 @@
     };
   }
 
-  function commentPayload(taskId, comment) {
+  function commentPayload(taskId, comment, isInsert = false) {
+    const authenticatedId = session()?.user?.id || null;
+    const knownRow = comment?._supabaseId ? cache.comments.get(comment._supabaseId) : null;
+    const authorId = isInsert
+      ? authenticatedId
+      : (knownRow?.author_id || profileId(comment.author) || authenticatedId);
+    if (isInsert && profileName(authenticatedId)) comment.author = profileName(authenticatedId);
     return {
       task_id: taskId,
-      author_id: profileId(comment.author),
+      author_id: authorId,
       content: String(comment.text || ' '),
       created_at: comment.createdAt || new Date().toISOString(),
       // Edits must advance updated_at so Realtime and fallback polling deliver
@@ -745,7 +821,8 @@
       await upsertTask(task);
       return comment;
     }
-    const payload = commentPayload(task._supabaseId, comment);
+    const isInsert = !comment._supabaseId;
+    const payload = commentPayload(task._supabaseId, comment, isInsert);
     if (comment._supabaseId) {
       await request(`/rest/v1/task_comments?id=eq.${comment._supabaseId}`, {
         method: 'PATCH',
@@ -763,6 +840,7 @@
     const row = inserted?.[0];
     if (!row?.id) throw new Error('The Task Chat message was not confirmed by the shared database');
     comment._supabaseId = row.id;
+    comment.author = profileName(row.author_id) || comment.author;
     cache.comments.set(row.id, { ...row, localId: comment.id });
     cache.commentHashes.set(row.id, commentHash(comment));
     lastCommentSyncAt = latestTimestamp(lastCommentSyncAt, row.updated_at || row.created_at);
@@ -787,7 +865,8 @@
     }
 
     for (const comment of current) {
-      const payload = commentPayload(taskId, comment);
+      const isInsert = !comment._supabaseId;
+      const payload = commentPayload(taskId, comment, isInsert);
       const hash = commentHash(comment);
       if (comment._supabaseId) {
         if (cache.commentHashes.get(comment._supabaseId) !== hash) {
@@ -800,15 +879,17 @@
         }
         continue;
       }
-      const inserted = await request('/rest/v1/task_comments?select=id', {
+      const inserted = await request('/rest/v1/task_comments?select=id,task_id,author_id,content,created_at,updated_at,legacy_data', {
         method: 'POST',
         headers: { Prefer: 'return=representation' },
         body: JSON.stringify(payload),
       });
       const id = inserted?.[0]?.id;
       if (id) {
+        const row = inserted[0];
         comment._supabaseId = id;
-        cache.comments.set(id, { id, task_id: taskId, localId: comment.id });
+        comment.author = profileName(row.author_id) || comment.author;
+        cache.comments.set(id, { ...row, localId: comment.id });
         cache.commentHashes.set(id, commentHash(comment));
         // Version 53: comments and @mentions use Task Chat/browser
         // notifications. Email remains reserved for critical workflows.
@@ -817,16 +898,21 @@
   }
 
   async function upsertTask(task) {
-    const payload = taskPayload(task);
+    const isInsert = !task._supabaseId;
+    const payload = taskPayload(task, isInsert);
     if (!payload.space_id) throw new Error(`Unknown Space for task ${task.id}`);
     let id = task._supabaseId;
     if (id) {
-      const updated = await request(`/rest/v1/tasks?id=eq.${id}&select=id,task_key`, {
+      const updated = await request(`/rest/v1/tasks?id=eq.${id}&select=id,task_key,created_by_id,audit,legacy_data`, {
         method: 'PATCH',
         headers: { Prefer: 'return=representation' },
         body: JSON.stringify(payload),
       });
-      id = updated?.[0]?.id || id;
+      const row = updated?.[0];
+      id = row?.id || id;
+      if (Array.isArray(row?.audit)) task.audit = row.audit;
+      if (row?.legacy_data?.creator) task.creator = row.legacy_data.creator;
+      if (row?.created_by_id) payload.created_by_id = row.created_by_id;
     } else {
       let inserted = null;
       let candidateKey = payload.task_key;
@@ -834,7 +920,7 @@
         payload.task_key = candidateKey;
         if (payload.legacy_data) payload.legacy_data.id = candidateKey;
         try {
-          inserted = await request('/rest/v1/tasks?select=id,task_key', {
+          inserted = await request('/rest/v1/tasks?select=id,task_key,created_by_id,audit,legacy_data', {
             method: 'POST',
             headers: { Prefer: 'return=representation' },
             body: JSON.stringify(payload),
@@ -849,10 +935,15 @@
       if (!id) throw new Error(`Task ${task.id} was not saved`);
       task.id = inserted[0].task_key;
       task._supabaseId = id;
+      if (Array.isArray(inserted[0].audit)) task.audit = inserted[0].audit;
+      if (inserted[0].legacy_data?.creator) task.creator = inserted[0].legacy_data.creator;
+      if (inserted[0].created_by_id) payload.created_by_id = inserted[0].created_by_id;
     }
     cache.tasks.set(id, task);
     await syncComments(task);
     cache.taskHashes.set(id, taskHash(task));
+    cache.taskCreatedByIds.set(id, payload.created_by_id || null);
+    cache.taskCreatorNames.set(id, task.creator || '');
   }
 
   async function syncTasks(tasks, activity = []) {
@@ -872,6 +963,8 @@
           });
           cache.tasks.delete(id);
           cache.taskHashes.delete(id);
+          cache.taskCreatedByIds.delete(id);
+          cache.taskCreatorNames.delete(id);
         }
       }
 

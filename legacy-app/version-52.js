@@ -128,17 +128,111 @@
   window.cancelCommentReply = taskId => { replyDraft=null; openTask(taskId,true); };
   function decorateComments52(task) {
     const form=document.querySelector('#modalContent .comment-form'); if(!form)return;
-    const fileInput=form.querySelector('input[type="file"]'); if(fileInput){fileInput.accept='image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip';fileInput.closest('label').childNodes[0].textContent='📎 Add files';}
+    const fileInput=form.querySelector('input[type="file"]');
+    if(fileInput){
+      fileInput.accept='image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip';
+      fileInput.closest('label').childNodes[0].textContent='📎 Add files';
+      const help=form.querySelector('.comment-tools small');
+      if(help)help.textContent='Up to 4 files; non-image files up to 3 MB total';
+    }
     if(replyDraft?.taskId===task.id&&!form.querySelector('.reply-composer')) form.insertAdjacentHTML('afterbegin',`<div class="reply-composer">Replying to <strong>${esc(replyDraft.author)}</strong><span>${esc(replyDraft.text).slice(0,120)}</span><button type="button" onclick="cancelCommentReply('${esc(task.id)}')">×</button></div>`);
     document.querySelectorAll('#modalContent .comment-list article.comment').forEach((article,index)=>{if(article.querySelector('.comment-reply-btn'))return;const comments=taskDetailsDraft?.comments||task.comments||[],comment=comments[index];if(!comment)return;article.dataset.commentId=comment.id;article.querySelector('.comment-meta')?.insertAdjacentHTML('beforeend',`<button type="button" class="comment-reply-btn" onclick="replyToComment('${esc(task.id)}','${esc(comment.id)}')">Reply</button>`);if(comment.replyTo)article.insertAdjacentHTML('afterbegin',`<div class="quoted-comment"><strong>${esc(comment.replyTo.author)}</strong><span>${esc(comment.replyTo.text||'').slice(0,160)}</span></div>`);if(comment.attachments?.length)article.insertAdjacentHTML('beforeend',`<div class="comment-attachments">${comment.attachments.map(file=>`<a href="${file.data}" download="${esc(file.name)}"><strong>${esc(file.name)}</strong><small>${esc(file.type||'File')} · ${Math.ceil(file.size/1024)} KB</small></a>`).join('')}</div>`);});
   }
   const baseAddComment52 = addComment;
+  const acceptedCommentFileExtensions52 = new Set(['pdf','doc','docx','xls','xlsx','ppt','pptx','txt','csv','zip']);
+  const acceptedCommentImageExtensions52 = new Set(['png','jpg','jpeg','gif','webp','heic','heif']);
+  function commentFileExtension52(file) {
+    return String(file?.name || '').split('.').pop()?.toLowerCase() || '';
+  }
+  function isCommentImage52(file) {
+    return String(file?.type || '').startsWith('image/') || acceptedCommentImageExtensions52.has(commentFileExtension52(file));
+  }
+  function commentImageForCompression52(file) {
+    if(String(file?.type||'').startsWith('image/'))return file;
+    const extension=commentFileExtension52(file);
+    const mime=extension==='jpg'||extension==='jpeg'?'image/jpeg':extension==='heic'||extension==='heif'?`image/${extension}`:`image/${extension||'png'}`;
+    return new File([file],file.name,{type:mime,lastModified:file.lastModified});
+  }
+  function isAcceptedCommentFile52(file) {
+    return isCommentImage52(file) || acceptedCommentFileExtensions52.has(commentFileExtension52(file));
+  }
+  function readCommentFile52(file) {
+    return new Promise((resolve,reject)=>{
+      const reader=new FileReader();
+      reader.onload=()=>resolve({name:file.name,type:file.type||'application/octet-stream',size:file.size,data:reader.result});
+      reader.onerror=()=>reject(new Error(`The file “${file.name}” could not be read. Please select it again.`));
+      reader.onabort=()=>reject(new Error(`Reading “${file.name}” was cancelled.`));
+      reader.readAsDataURL(file);
+    });
+  }
   addComment = async function version52AddComment(id,event) {
-    const input=event.currentTarget.querySelector('input[type="file"]'),files=[...(input?.files||[])];
-    if(files.some(file=>file.size>3*1024*1024)){event.preventDefault();toast('Each attachment must be 3 MB or smaller');return}
-    const extras=await Promise.all(files.filter(file=>!file.type.startsWith('image/')).map(file=>new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve({name:file.name,type:file.type,size:file.size,data:reader.result});reader.onerror=reject;reader.readAsDataURL(file)})));
-    if(input&&typeof DataTransfer!=='undefined'){const transfer=new DataTransfer();files.filter(file=>file.type.startsWith('image/')).slice(0,4).forEach(file=>transfer.items.add(file));input.files=transfer.files;}
-    await baseAddComment52(id,event); const pending=taskDetailsDraft?.comments?.find(comment=>comment.pending); if(pending){pending.attachments=extras;if(replyDraft?.taskId===id){pending.replyTo={id:replyDraft.commentId,author:replyDraft.author,text:replyDraft.text};replyDraft=null;}openTask(id,true);}
+    // preventDefault must happen before the first asynchronous file read. The
+    // previous implementation waited for FileReader first, allowing the
+    // browser to submit/reload the form before the Comment was created.
+    event.preventDefault();
+    const form=event.currentTarget;
+    const input=form.querySelector('input[type="file"]');
+    const textarea=form.elements.comment;
+    const textValue=String(textarea?.value || '').trim();
+    const files=[...(input?.files||[])];
+    const imageFiles=files.filter(isCommentImage52);
+    const attachmentFiles=files.filter(file=>!isCommentImage52(file));
+    const button=form.querySelector('button[type="submit"]');
+
+    // Scheduled Comments still use their dedicated workflow. Do not silently
+    // drop a selected attachment from a future Comment.
+    if(form.elements.scheduleEnabled?.checked){
+      if(files.length){toast('Files cannot be added to a scheduled comment yet');return;}
+      return baseAddComment52(id,event);
+    }
+    if(!textValue&&!files.length){toast('Write a comment or attach a file');return;}
+    if(files.length>4){toast('You can attach up to 4 files');return;}
+    const unsupported=attachmentFiles.find(file=>!isAcceptedCommentFile52(file));
+    if(unsupported){toast(`The file “${unsupported.name}” is not a supported attachment`);return;}
+    const oversized=attachmentFiles.find(file=>file.size>3*1024*1024);
+    if(oversized){toast(`The file “${oversized.name}” must be 3 MB or smaller`);return;}
+    if(attachmentFiles.reduce((total,file)=>total+file.size,0)>3*1024*1024){toast('Non-image attachments must be 3 MB or smaller in total');return;}
+
+    if(button){button.disabled=true;button.textContent='Adding…';}
+    try{
+      const [images,attachments]=await Promise.all([
+        Promise.all(imageFiles.map(file=>compressCommentImage(commentImageForCompression52(file)))),
+        Promise.all(attachmentFiles.map(readCommentFile52)),
+      ]);
+      const encodedSize=[...images,...attachments.map(file=>file.data)].reduce((total,data)=>total+String(data||'').length,0);
+      if(encodedSize>5*1024*1024)throw new Error('The combined attachments are too large. Please upload fewer or smaller files.');
+      if(taskDetailsDraft?.id!==id)throw new Error('The task editor is no longer open');
+      const createdAt=new Date().toISOString();
+      const comment={
+        id:`comment-${Date.now()}`,
+        author:CURRENT_USER,
+        role:roleName(),
+        text:textValue,
+        images,
+        attachments,
+        createdAt,
+        pending:true,
+        human:true,
+      };
+      if(replyDraft?.taskId===id){
+        comment.replyTo={id:replyDraft.commentId,author:replyDraft.author,text:replyDraft.text};
+        replyDraft=null;
+      }
+      taskDetailsDraft.comments=taskDetailsDraft.comments||[];
+      taskDetailsDraft.comments.unshift(comment);
+      taskDetailsDraft.lastHumanActivityAt=createdAt;
+      markTaskDetailsDirty(id);
+      // Clearing only after every file has been read preserves the user's text
+      // and selection whenever validation or reading fails.
+      if(textarea)textarea.value='';
+      if(input)input.value='';
+      openTask(id,true);
+      toast('Comment and files added. Press Submit to save them.');
+    }catch(error){
+      console.error('Comment attachment could not be prepared',error);
+      if(button){button.disabled=false;button.textContent='Add comment';}
+      toast(error?.message||'The comment and its files could not be added');
+    }
   };
 
   // Voice Memo review protects edited drafts from accidental dismissal.
