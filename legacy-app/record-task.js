@@ -1,5 +1,5 @@
 (()=>{
-  document.querySelector('.app-version-badge')?.replaceChildren('Version 75');
+  document.querySelector('.app-version-badge')?.replaceChildren('Version 76');
   const url='https://ewjalucwaeotamodlajs.supabase.co';
   const key='sb_publishable_XeGECEGDBFj1b0z-zyb2kQ_SdlTL2tG';
   const button=document.getElementById('recordButton');

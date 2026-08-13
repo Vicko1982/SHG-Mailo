@@ -1,5 +1,5 @@
 // Edge function: admin-update-password
-// A user may change their OWN password. Admins may reset another user's password.
+// A user may change their own password. Only Victor may reset another user's password.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
 const corsHeaders = {
@@ -59,12 +59,9 @@ Deno.serve(async (req) => {
 
     // Own password → always allowed. Other user → admin/main_admin required.
     if (body.user_id !== u.user.id) {
-      const { data: roles } = await admin
-        .from("user_roles")
-        .select("role")
-        .eq("user_id", u.user.id);
-      const isAdmin = !!roles?.some((r) => r.role === "admin" || r.role === "main_admin");
-      if (!isAdmin) {
+      const { data: isVictor, error: victorError } = await admin
+        .rpc("is_victor_stavropoulos", { _user_id: u.user.id });
+      if (victorError || isVictor !== true) {
         return new Response(
           JSON.stringify({ error: "Δεν επιτρέπεται αλλαγή κωδικού άλλου χρήστη" }),
           { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },

@@ -18,6 +18,8 @@
     <link rel="stylesheet" href="styles.css?v=262" />
     <link rel="stylesheet" href="version-63.css?v=63" />
     <link rel="stylesheet" href="version-75.css?v=275" />
+    <link rel="stylesheet" href="version-76-core.css?v=276" />
+    <link rel="stylesheet" href="version-76-chat.css?v=276" />
   </head>
   <body>
     <div class="app-shell">
@@ -53,7 +55,7 @@
         </div>
         <button id="sidebarUserButton" class="sidebar-footer" type="button" aria-haspopup="menu" aria-expanded="false">
           <div id="currentUserAvatar" class="avatar">…</div>
-          <div class="user-meta"><strong id="currentUserName">Loading user…</strong><span id="roleLabel">Loading permissions…</span><small class="version-badge">Version 75</small></div>
+          <div class="user-meta"><strong id="currentUserName">Loading user…</strong><span id="roleLabel">Loading permissions…</span><small class="version-badge">Version 76</small></div>
           <span class="dots" aria-hidden="true">•••</span>
         </button>
       </aside>
@@ -145,9 +147,9 @@
         <p id="authError" class="auth-error hidden"></p>
       </section>
     </div>
-    <script src="auth.js?v=274"></script>
+    <script src="auth.js?v=276"></script>
     <script src="vendor/supabase.js?v=21107"></script>
-    <script src="remote-sync.js?v=273"></script>
+    <script src="remote-sync.js?v=276"></script>
     <script>
       (() => {
         let applicationStartPromise = null;
@@ -248,7 +250,7 @@
         }
         if (window.SHG_WAITING_FOR_LOGIN) return false;
         try {
-          await loadScript('app.js?v=273');
+          await loadScript('app.js?v=276');
           await loadScript('version-51.js?v=51');
           await loadScript('version-52.js?v=52');
           await loadScript('version-53.js?v=53');
@@ -263,6 +265,27 @@
           await loadScript('version-63.js?v=63');
           await loadScript('version-64.js?v=274');
           await loadScript('version-75.js?v=275');
+          await loadScript('version-76-list.js?v=276');
+          await loadScript('version-76-core.js?v=276');
+          await loadScript('version-76-admin.js?v=276');
+          await loadScript('version-76-chat.js?v=276');
+          // app.js performs its initial paint before the version wrappers are
+          // installed. Run one definitive paint now that the complete Version
+          // 76 behavior and access policy are active.
+          window.render?.();
+          const linkedTaskId = String(window.SHG_PENDING_LINKED_TASK_ID || '').trim();
+          if (linkedTaskId) {
+            const linkedTask = typeof state !== 'undefined'
+              ? state.tasks.find(task => task.id === linkedTaskId)
+              : null;
+            window.SHG_PENDING_LINKED_TASK_ID = '';
+            if (linkedTask && !isTaskDeleted(linkedTask) && typeof canCurrentUserAccessTask === 'function' && canCurrentUserAccessTask(linkedTask)) {
+              openTask(linkedTask.id);
+            } else {
+              window.closeModal?.(true);
+              window.toast?.('This Task does not exist or you do not have access to it');
+            }
+          }
           window.SHG_APP_LOADED = true;
         } catch (error) {
           showConnectionError(error);

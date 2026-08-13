@@ -34,6 +34,7 @@ type Profile = {
 
 type QueueJob = {
   id: string;
+  task_id: string | null;
   recipient_email: string;
   recipient_name: string | null;
   author_name: string;
@@ -45,6 +46,105 @@ type QueueJob = {
   notification_type?: string;
   recipient_context?: { roles?: string[] };
 };
+
+type TaskRecord = {
+  id: string;
+  task_key: string;
+  title: string;
+  space_id: string;
+  assignee_id: string | null;
+  supervisor_id: string | null;
+  approver_id: string | null;
+  created_by_id: string | null;
+};
+
+type SpaceRecord = {
+  id: string;
+  key: string;
+  type: string;
+  owner_id: string | null;
+};
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function isPersonalSpace(space: SpaceRecord): boolean {
+  return normalize(space.key) === "per" || normalize(space.type) === "personal";
+}
+
+function wait(milliseconds: number) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function resolveTask(
+  admin: ReturnType<typeof createClient>,
+  taskIdValue: unknown,
+  taskKeyValue: unknown,
+  attempts = 1,
+): Promise<TaskRecord> {
+  const taskId = String(taskIdValue ?? "").trim();
+  const requestedKey = String(taskKeyValue ?? "").trim();
+  if (!taskId && !requestedKey) throw new Error("A taskId or taskKey is required");
+  if (taskId && !UUID_PATTERN.test(taskId)) throw new Error("Invalid taskId");
+
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    let query = admin.from("tasks").select(
+      "id, task_key, title, space_id, assignee_id, supervisor_id, approver_id, created_by_id",
+    );
+    query = taskId ? query.eq("id", taskId) : query.eq("task_key", requestedKey);
+    const { data, error } = await query.maybeSingle();
+    if (error) lastError = error;
+    if (data) {
+      const task = data as TaskRecord;
+      if (requestedKey && normalize(task.task_key) !== normalize(requestedKey)) {
+        throw new Error("taskId and taskKey refer to different tasks");
+      }
+      return task;
+    }
+    if (attempt + 1 < attempts) await wait(250 * (attempt + 1));
+  }
+  if (lastError) throw lastError;
+  throw new Error("Task not found");
+}
+
+async function resolveSpace(
+  admin: ReturnType<typeof createClient>,
+  spaceId: string,
+): Promise<SpaceRecord> {
+  const { data, error } = await admin.from("spaces")
+    .select("id, key, type, owner_id")
+    .eq("id", spaceId)
+    .single();
+  if (error || !data) throw error ?? new Error("Task space not found");
+  return data as SpaceRecord;
+}
+
+async function assertTaskAccess(
+  userClient: ReturnType<typeof createClient>,
+  userId: string,
+  taskId: string,
+) {
+  const { data, error } = await userClient.rpc("user_can_access_task", {
+    _user_id: userId,
+    _task_id: taskId,
+  });
+  if (error) throw error;
+  if (data !== true) throw new Error("You do not have access to this task");
+}
+
+async function hasAdministrativeRole(
+  userClient: ReturnType<typeof createClient>,
+  userId: string,
+): Promise<boolean> {
+  const [{ data: isMainAdmin, error: mainAdminError }, { data: isAdmin, error: adminError }] =
+    await Promise.all([
+      userClient.rpc("is_main_admin", { _user_id: userId }),
+      userClient.rpc("has_role", { _user_id: userId, _role: "admin" }),
+    ]);
+  if (mainAdminError) throw mainAdminError;
+  if (adminError) throw adminError;
+  return isMainAdmin === true || isAdmin === true;
+}
 
 function normalize(value: string): string {
   return value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
@@ -201,6 +301,45 @@ async function processQueue(admin: ReturnType<typeof createClient>) {
   const jobs = (data ?? []) as QueueJob[];
   if (!jobs.length) return { processed: 0, sent: 0, retrying: 0, failed: 0 };
 
+  // Re-resolve the Task immediately before SMTP delivery. This both repairs
+  // legacy queue rows that did not store task_id and prevents a message from
+  // being sent after its Task has been moved into a Personal space.
+  const taskIds = [...new Set(jobs.map((job) => job.task_id).filter(Boolean))] as string[];
+  const taskKeys = [...new Set(jobs.map((job) => job.task_key).filter(Boolean))];
+  const tasksById = new Map<string, TaskRecord>();
+  const tasksByKey = new Map<string, TaskRecord>();
+  if (taskIds.length) {
+    const { data: tasks, error: tasksError } = await admin.from("tasks").select(
+      "id, task_key, title, space_id, assignee_id, supervisor_id, approver_id, created_by_id",
+    ).in("id", taskIds);
+    if (tasksError) throw tasksError;
+    for (const task of (tasks ?? []) as TaskRecord[]) {
+      tasksById.set(task.id, task);
+      tasksByKey.set(normalize(task.task_key), task);
+    }
+  }
+  if (taskKeys.length) {
+    const unresolvedKeys = taskKeys.filter((key) => !tasksByKey.has(normalize(key)));
+    if (unresolvedKeys.length) {
+      const { data: tasks, error: tasksError } = await admin.from("tasks").select(
+        "id, task_key, title, space_id, assignee_id, supervisor_id, approver_id, created_by_id",
+      ).in("task_key", unresolvedKeys);
+      if (tasksError) throw tasksError;
+      for (const task of (tasks ?? []) as TaskRecord[]) {
+        tasksById.set(task.id, task);
+        tasksByKey.set(normalize(task.task_key), task);
+      }
+    }
+  }
+  const spaceIds = [...new Set([...tasksById.values()].map((task) => task.space_id))];
+  const spacesById = new Map<string, SpaceRecord>();
+  if (spaceIds.length) {
+    const { data: spaces, error: spacesError } = await admin.from("spaces")
+      .select("id, key, type, owner_id").in("id", spaceIds);
+    if (spacesError) throw spacesError;
+    for (const space of (spaces ?? []) as SpaceRecord[]) spacesById.set(space.id, space);
+  }
+
   const smtpHost = Deno.env.get("ZOHO_SMTP_HOST") ?? "smtppro.zoho.eu";
   const smtpPort = Number(Deno.env.get("ZOHO_SMTP_PORT") ?? "465");
   const smtpUser = Deno.env.get("ZOHO_SMTP_USER") ?? "info@shd.global";
@@ -216,7 +355,34 @@ async function processQueue(admin: ReturnType<typeof createClient>) {
   let retrying = 0;
   let failed = 0;
   for (const job of jobs) {
+    const taskById = job.task_id ? tasksById.get(job.task_id) : undefined;
+    const taskByKey = tasksByKey.get(normalize(job.task_key));
+    const task = job.task_id ? taskById : taskByKey;
+    const referenceMismatch = Boolean(
+      taskById && normalize(taskById.task_key) !== normalize(job.task_key),
+    );
+    const space = task ? spacesById.get(task.space_id) : undefined;
+    if (!task || !space || referenceMismatch || isPersonalSpace(space)) {
+      const reason = referenceMismatch
+        ? "Email suppressed because task_id and task_key do not match"
+        : !task || !space
+        ? "Email suppressed because its Task could not be resolved"
+        : "Email suppressed for a Personal Task";
+      await admin.from("mention_email_queue").update({
+        status: "failed",
+        last_error: reason,
+        updated_at: new Date().toISOString(),
+      }).eq("id", job.id);
+      failed += 1;
+      continue;
+    }
     try {
+      if (job.task_id !== task.id) {
+        const { error: bindError } = await admin.from("mention_email_queue")
+          .update({ task_id: task.id, updated_at: new Date().toISOString() })
+          .eq("id", job.id);
+        if (bindError) throw bindError;
+      }
       const content = mailContent(job);
       await transporter.sendMail({
         from: `"SHG Task Manager" <${sender}>`,
@@ -300,9 +466,25 @@ Deno.serve(async (request) => {
       .single();
     if (!callerProfile || callerProfile.is_active === false) throw new Error("Inactive user");
 
-    let taskId: string | null = null;
-    let taskKey = String(payload.taskKey ?? "").trim();
-    let taskTitle = String(payload.taskTitle ?? "").trim();
+    // Never trust the Task metadata supplied by the browser. Resolve the
+    // canonical row for every enqueue request and bind every queue item to it.
+    // Task creation is synchronized asynchronously by the legacy client, so a
+    // short bounded retry preserves that existing notification flow.
+    const task = await resolveTask(
+      admin,
+      payload.taskId,
+      payload.taskKey,
+      notificationType === "task_created" ? 8 : 3,
+    );
+    const space = await resolveSpace(admin, task.space_id);
+    if (isPersonalSpace(space)) {
+      throw new Error("Email notifications are disabled for Personal Tasks");
+    }
+    await assertTaskAccess(userClient, authData.user.id, task.id);
+
+    const taskId = task.id;
+    const taskKey = task.task_key;
+    const taskTitle = task.title;
     let comment = String(payload.comment ?? "").trim();
     let commentId = String(payload.commentId ?? "").trim();
     const authorName = String(callerProfile.full_name ?? payload.authorName ?? authData.user.email ?? "User");
@@ -310,21 +492,38 @@ Deno.serve(async (request) => {
       ? payload.mentionedNames.map(String)
       : [];
 
-    if (payload.taskId && payload.commentId) {
-      const [{ data: task, error: taskError }, { data: savedComment, error: commentError }] =
-        await Promise.all([
-          admin.from("tasks").select("id, task_key, title").eq("id", payload.taskId).single(),
-          admin.from("task_comments").select("id, task_id, author_id, content")
-            .eq("id", payload.commentId).eq("task_id", payload.taskId)
-            .eq("author_id", authData.user.id).single(),
-        ]);
-      if (taskError || !task) throw new Error("Task not found");
-      if (commentError || !savedComment) throw new Error("Comment not found");
-      taskId = task.id;
-      taskKey = task.task_key;
-      taskTitle = task.title;
+    // When the request references a persisted comment, use only its stored
+    // text and verify that the authenticated caller is its author. Synthetic
+    // assignment/create event identifiers are intentionally non-UUID values.
+    const referencesPersistedComment = Boolean(commentId && UUID_PATTERN.test(commentId));
+    if (referencesPersistedComment) {
+      const { data: savedComment, error: commentError } = await userClient
+        .from("task_comments").select("id, task_id, author_id, content")
+        .eq("id", commentId).eq("task_id", task.id).maybeSingle();
+      if (commentError) throw commentError;
+      if (!savedComment || savedComment.author_id !== authData.user.id) {
+        throw new Error("Comment not found or not authored by the caller");
+      }
       comment = savedComment.content;
       commentId = savedComment.id;
+    }
+
+    // Access alone may come from broad shared-space membership. Enqueueing is
+    // additionally limited to the Task creator/participants, an Administrator,
+    // or the verified author of the persisted comment that caused the email.
+    const callerIsParticipant = [
+      task.created_by_id,
+      task.assignee_id,
+      task.supervisor_id,
+      task.approver_id,
+    ].includes(authData.user.id);
+    if (
+      (notificationType === "task_created" && task.created_by_id !== authData.user.id) ||
+      (notificationType !== "task_created" && !referencesPersistedComment && !callerIsParticipant)
+    ) {
+      if (!await hasAdministrativeRole(userClient, authData.user.id)) {
+        throw new Error("You are not allowed to enqueue notifications for this task");
+      }
     }
 
     if (notificationType === "task_created") {
@@ -343,13 +542,29 @@ Deno.serve(async (request) => {
       .select("id, full_name, email, is_active");
     if (profilesError) throw profilesError;
     const activeProfiles = (profiles ?? []) as Profile[];
-    let recipients = requestedNames.length
+    const requestedProfiles = requestedNames.length
       ? resolveRequestedProfiles(activeProfiles, requestedNames)
       : activeProfiles.filter((profile) =>
         !!profile.full_name && !!profile.email && profile.is_active !== false &&
         mentionsProfile(comment, profile.full_name)
       );
-    recipients = recipients.filter((profile) => profile.id !== authData.user.id);
+    const rolesByProfileId = new Map<string, string[]>();
+    const recipients = requestedProfiles.filter((profile) => {
+      if (profile.id === authData.user.id || !profile.full_name) return false;
+      const roles = [
+        mentionsProfile(comment, profile.full_name) ? "Mention" : null,
+        task.assignee_id === profile.id ? "Assignee" : null,
+        task.supervisor_id === profile.id ? "Supervisor" : null,
+        task.approver_id === profile.id ? "Approver" : null,
+      ].filter(Boolean) as string[];
+      const allowed = notificationType === "mention"
+        ? roles.includes("Mention")
+        : notificationType === "comment"
+        ? roles.some((role) => ["Mention", "Assignee", "Supervisor"].includes(role))
+        : roles.some((role) => ["Assignee", "Supervisor", "Approver"].includes(role));
+      if (allowed) rolesByProfileId.set(profile.id, roles);
+      return allowed;
+    });
 
     const appUrl = (Deno.env.get("SHG_APP_URL") ?? "https://mailo.shd.global").replace(/\/+$/, "");
     const taskUrl = `${appUrl}/?task=${encodeURIComponent(taskKey)}`;
@@ -368,10 +583,7 @@ Deno.serve(async (request) => {
       comment_text: comment,
       task_url: taskUrl,
       recipient_context: {
-        roles: [...new Set(
-          Object.entries(payload.recipientRoles ?? {})
-            .find(([name]) => normalize(name) === normalize(recipient.full_name ?? ""))?.[1] ?? [],
-        )],
+        roles: rolesByProfileId.get(recipient.id) ?? [],
       },
     }));
     if (queueRows.length) {

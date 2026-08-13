@@ -1,9 +1,7 @@
 // Edge function: admin-create-user
 // Creates a new auth user (with profile + role). Allowed only when:
 //  - No admin/main_admin exists yet (bootstrap → first user becomes main_admin), OR
-//  - The caller is authenticated and has the 'admin' or 'main_admin' role.
-// Admin and main_admin can create users and admins.
-// Existing Main Admins may create additional Main Admins. Victor remains permanent.
+//  - The caller is the authenticated permanent owner, Victor Stavropoulos.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
 const corsHeaders = {
@@ -46,33 +44,6 @@ Deno.serve(async (req) => {
       .in("role", ["admin", "main_admin"]);
     if (cErr) throw cErr;
 
-    let callerRole: Role | null = null;
-    const authHeader = req.headers.get("Authorization");
-    if (authHeader?.startsWith("Bearer ")) {
-      const token = authHeader.replace("Bearer ", "");
-      const userClient = createClient(SUPABASE_URL, ANON_KEY, {
-        global: { headers: { Authorization: `Bearer ${token}` } },
-        auth: { persistSession: false, autoRefreshToken: false },
-      });
-      const { data: u } = await userClient.auth.getUser(token);
-      if (u?.user) {
-        const { data: roles } = await admin
-          .from("user_roles")
-          .select("role")
-          .eq("user_id", u.user.id);
-        if (roles?.some((r) => r.role === "main_admin")) callerRole = "main_admin";
-        else if (roles?.some((r) => r.role === "admin")) callerRole = "admin";
-      }
-    }
-
-    const isBootstrap = (adminCount ?? 0) === 0;
-    if (!isBootstrap && !callerRole) {
-      return new Response(
-        JSON.stringify({ error: "Forbidden: admin role required" }),
-        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    }
-
     const body = (await req.json()) as Payload;
     if (!body.email || !body.full_name || !body.role) {
       return new Response(JSON.stringify({ error: "Missing fields" }), {
@@ -87,16 +58,41 @@ Deno.serve(async (req) => {
       });
     }
 
+    let callerIsVictor = false;
+    const authHeader = req.headers.get("Authorization");
+    if (authHeader?.startsWith("Bearer ")) {
+      const token = authHeader.replace("Bearer ", "");
+      const userClient = createClient(SUPABASE_URL, ANON_KEY, {
+        global: { headers: { Authorization: `Bearer ${token}` } },
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+      const { data: u } = await userClient.auth.getUser(token);
+      if (u?.user) {
+        const { data: victorCheck, error: victorError } = await admin
+          .rpc("is_victor_stavropoulos", { _user_id: u.user.id });
+        callerIsVictor = !victorError && victorCheck === true;
+      }
+    }
+
+    const isBootstrap = (adminCount ?? 0) === 0;
+    if (isBootstrap && body.email.trim().toLowerCase() !== "victor@shd.global") {
+      return new Response(
+        JSON.stringify({ error: "The first MAILO account must be Victor Stavropoulos" }),
+        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+    if (!isBootstrap && !callerIsVictor) {
+      return new Response(
+        JSON.stringify({ error: "Only Victor Stavropoulos can create or configure users" }),
+        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
     // The bootstrap account is the permanent Main Admin. Afterwards only an
     // existing Main Admin may create another Main Admin.
     let finalRole: Role = body.role;
     if (isBootstrap) {
       finalRole = "main_admin";
-    } else if (body.role === "main_admin" && callerRole !== "main_admin") {
-      return new Response(
-        JSON.stringify({ error: "Only a Main Admin can create another Main Admin" }),
-        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
     }
 
     let { data: created, error: createErr } = await admin.auth.admin.createUser({
@@ -134,11 +130,30 @@ Deno.serve(async (req) => {
       aliases: Array.isArray(body.aliases) ? body.aliases : [],
     });
 
-    // Reset roles to the requested one
-    await admin.from("user_roles").delete().eq("user_id", userId);
+    // Reset roles to the requested one. The permanent owner role itself is
+    // protected by a database trigger, so bootstrap/synchronization must keep
+    // that row and only remove accidental extra roles.
+    const { data: targetIsVictor, error: targetVictorError } = await admin
+      .rpc("is_victor_stavropoulos", { _user_id: userId });
+    if (targetVictorError) throw targetVictorError;
+    if (targetIsVictor === true) {
+      finalRole = "main_admin";
+      const { error: cleanupRoleError } = await admin
+        .from("user_roles")
+        .delete()
+        .eq("user_id", userId)
+        .neq("role", "main_admin");
+      if (cleanupRoleError) throw cleanupRoleError;
+    } else {
+      const { error: deleteRoleError } = await admin
+        .from("user_roles")
+        .delete()
+        .eq("user_id", userId);
+      if (deleteRoleError) throw deleteRoleError;
+    }
     const { error: roleErr } = await admin
       .from("user_roles")
-      .insert({ user_id: userId, role: finalRole });
+      .upsert({ user_id: userId, role: finalRole }, { onConflict: "user_id,role" });
     if (roleErr) {
       return new Response(JSON.stringify({ error: roleErr.message }), {
         status: 500,

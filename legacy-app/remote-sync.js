@@ -38,6 +38,8 @@
   let commentFallbackTimer = null;
   let commentFallbackRunning = false;
   let lastCommentSyncAt = '';
+  let privatePreferences = {};
+  const privateTaskStars = new Set();
 
   function session() {
     return window.shgGetSupabaseSession?.() || null;
@@ -59,9 +61,14 @@
   }
 
   function taskForLocalCache(task) {
-    if (!task?._supabaseId) return safeClone(task) || {};
+    if (!task?._supabaseId) {
+      const clone = safeClone(task) || {};
+      delete clone.starredBy;
+      return clone;
+    }
     const { comments = [], ...withoutComments } = task;
     const clone = safeClone(withoutComments) || {};
+    delete clone.starredBy;
     // The shared database is the source of truth for synced comments. Keeping
     // thousands of them (and their attachments) in localStorage made normal
     // browser profiles stall while a clean Private/Incognito profile worked.
@@ -161,7 +168,24 @@
     const { comments, ...metadata } = task || {};
     const clone = safeClone(metadata) || {};
     delete clone._supabaseId;
+    // Stars are private user preferences. Never copy another user's star map
+    // into the shared Task row or browser Task cache.
+    delete clone.starredBy;
     return clone;
+  }
+
+  function hydratePrivatePreferences(preferences) {
+    privatePreferences = preferences && typeof preferences === 'object'
+      ? safeClone(preferences) || {}
+      : {};
+    privateTaskStars.clear();
+    const savedStars = privatePreferences.mailo_starred_tasks;
+    if (savedStars && typeof savedStars === 'object') {
+      for (const [taskId, value] of Object.entries(savedStars)) {
+        if (value) privateTaskStars.add(taskId);
+      }
+    }
+    window.SHG_PRIVATE_TASK_STARS = [...privateTaskStars];
   }
 
   function taskHash(task) {
@@ -233,6 +257,7 @@
       comments: commentsByTask.get(row.id) || [],
       _supabaseId: row.id,
     };
+    delete task.starredBy;
     return task;
   }
 
@@ -390,6 +415,7 @@
     let deletedTaskKeys = new Set();
     try {
       rawLocalTasks = JSON.parse(localStorage.getItem(TASK_KEY)) || [];
+      for (const task of rawLocalTasks) if (task && typeof task === 'object') delete task.starredBy;
       rawPendingLocalTasks = rawLocalTasks.filter(task => task && !task._supabaseId);
     } catch {}
     try {
@@ -414,9 +440,11 @@
     const core = await Promise.all([profilesRequest, rolesRequest, spacesRequest, membersRequest, tasksRequest]);
     const optional = await Promise.allSettled([
       fetchAll('app_settings', 'current_approver_id', 'id=eq.true'),
+      fetchAll('user_preferences', 'user_id,preferences,updated_at', `user_id=eq.${encodeURIComponent(session()?.user?.id || '')}`),
     ]);
     const [profiles, roles, spaces, members, tasks] = core;
     const settings = optional[0].status === 'fulfilled' ? optional[0].value : [];
+    const preferenceRows = optional[1].status === 'fulfilled' ? optional[1].value : [];
     for (const result of optional) {
       if (result.status === 'rejected') console.warn('Optional shared data unavailable', result.reason);
     }
@@ -509,6 +537,7 @@
       [...new Set(localTasks.map(task => task.approver).filter(Boolean))][0] ||
       '';
     const approverNames = currentApproverName ? [currentApproverName] : [];
+    hydratePrivatePreferences(preferenceRows[0]?.preferences || {});
 
     window.SHG_REMOTE_BOOTSTRAP = {
       profiles: profiles.filter(profile => profile.is_active !== false).map(profile => ({id:profile.id,name:profile.full_name,email:profile.email||'',initials:profile.initials||'',voiceNames:profile.voice_names||[],aliases:profile.aliases||[]})),
@@ -521,6 +550,8 @@
       roleByName,
       approverNames,
       currentApproverName,
+      privatePreferences,
+      privateTaskStars: [...privateTaskStars],
     };
     writeTaskCache(localTasks);
     safeLocalSet(ACTIVITY_KEY, JSON.stringify(localActivity));
@@ -694,7 +725,9 @@
       author_id: profileId(comment.author),
       content: String(comment.text || ' '),
       created_at: comment.createdAt || new Date().toISOString(),
-      updated_at: comment.createdAt || new Date().toISOString(),
+      // Edits must advance updated_at so Realtime and fallback polling deliver
+      // the new text to already-open Task Chats.
+      updated_at: comment.editedAt || comment.updatedAt || comment.createdAt || new Date().toISOString(),
       legacy_data: (() => {
         const clone = safeClone(comment) || {};
         delete clone._supabaseId;
@@ -930,6 +963,39 @@
     return true;
   }
 
+  function isTaskStarred(task) {
+    return Boolean(task?._supabaseId && privateTaskStars.has(String(task._supabaseId)));
+  }
+
+  async function setTaskStar(task, starred) {
+    if (!enabled() || !cache.ready) throw new Error('Your private Task preferences are still connecting');
+    if (!task) throw new Error('The Task was not found');
+    if (!task._supabaseId) await upsertTask(task);
+    const taskId = String(task._supabaseId || '');
+    if (!taskId) throw new Error('The Task must finish saving before it can be starred');
+
+    const wasStarred = privateTaskStars.has(taskId);
+    starred ? privateTaskStars.add(taskId) : privateTaskStars.delete(taskId);
+    window.SHG_PRIVATE_TASK_STARS = [...privateTaskStars];
+    window.dispatchEvent(new CustomEvent('shg:task-stars-changed', { detail: { taskId, starred: Boolean(starred) } }));
+    try {
+      const preferences = await request('/rest/v1/rpc/set_task_star', {
+        method: 'POST',
+        body: JSON.stringify({ _task_id: taskId, _starred: Boolean(starred) }),
+      });
+      hydratePrivatePreferences(preferences || {});
+      window.SHG_REMOTE_BOOTSTRAP.privatePreferences = privatePreferences;
+      window.SHG_REMOTE_BOOTSTRAP.privateTaskStars = [...privateTaskStars];
+      window.dispatchEvent(new CustomEvent('shg:task-stars-changed', { detail: { taskId, starred: isTaskStarred(task) } }));
+      return isTaskStarred(task);
+    } catch (error) {
+      wasStarred ? privateTaskStars.add(taskId) : privateTaskStars.delete(taskId);
+      window.SHG_PRIVATE_TASK_STARS = [...privateTaskStars];
+      window.dispatchEvent(new CustomEvent('shg:task-stars-changed', { detail: { taskId, starred: wasStarred } }));
+      throw error;
+    }
+  }
+
   window.shgPrepareRemoteData = prepareRemoteData;
   window.shgFetchRemoteComments = fetchRemoteComments;
   window.shgSaveCommentImmediately = saveCommentImmediately;
@@ -939,6 +1005,8 @@
   window.shgSafeLocalSet = safeLocalSet;
   window.shgWriteTaskCache = writeTaskCache;
   window.shgSaveUserSettings = saveUserSettings;
+  window.shgIsTaskStarred = isTaskStarred;
+  window.shgSetTaskStar = setTaskStar;
   window.addEventListener('shg:auth-session', () => startRealtimeComments());
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {

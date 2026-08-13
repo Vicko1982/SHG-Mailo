@@ -22,18 +22,31 @@ function normalize(value: unknown) {
     .toLocaleLowerCase("el");
 }
 
-async function requireMainAdmin(request: Request, admin: ReturnType<typeof createClient>) {
+async function requireUser(
+  request: Request,
+  admin: ReturnType<typeof createClient>,
+  mainAdminOnly = true,
+) {
   const token = (request.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "");
   if (!token) throw new Error("Authentication is required.");
   const { data: authData, error: authError } = await admin.auth.getUser(token);
   if (authError || !authData.user) throw new Error("Your session is no longer valid.");
-  const { data: roles, error: roleError } = await admin
-    .from("user_roles")
-    .select("role")
-    .eq("user_id", authData.user.id);
-  if (roleError) throw roleError;
-  if (!roles?.some((row) => row.role === "main_admin")) {
-    throw new Error("Import Voice Memos is available only to the Main Admin.");
+  const { data: profile, error: profileError } = await admin
+    .from("profiles")
+    .select("id,is_active")
+    .eq("id", authData.user.id)
+    .maybeSingle();
+  if (profileError) throw profileError;
+  if (!profile || profile.is_active === false) throw new Error("Your MAILO account is not active.");
+  if (mainAdminOnly) {
+    const { data: roles, error: roleError } = await admin
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", authData.user.id);
+    if (roleError) throw roleError;
+    if (!roles?.some((row) => row.role === "main_admin")) {
+      throw new Error("Import Voice Memos is available only to the Main Admin.");
+    }
   }
   return authData.user;
 }
@@ -89,9 +102,11 @@ Deno.serve(async (request) => {
     const admin = createClient(supabaseUrl, serviceKey, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
-    await requireMainAdmin(request, admin);
-
     const form = await request.formData();
+    const purpose = String(form.get("purpose") ?? "task-draft");
+    const commentTranscription = purpose === "comment-transcription";
+    await requireUser(request, admin, !commentTranscription);
+
     const file = form.get("file");
     if (!(file instanceof File)) throw new Error("Select an audio file.");
     if (file.size > 25 * 1024 * 1024) {
@@ -105,7 +120,9 @@ Deno.serve(async (request) => {
     const [{ data: profileRows, error: profilesError }, { data: spaceRows, error: spacesError }] =
       await Promise.all([
         admin.from("profiles").select("id,full_name,email,is_active,voice_names,aliases").neq("is_active", false).order("full_name"),
-        admin.from("spaces").select("id,key,name,type").order("name"),
+        commentTranscription
+          ? Promise.resolve({ data: [], error: null })
+          : admin.from("spaces").select("id,key,name,type").order("name"),
       ]);
     if (profilesError) throw profilesError;
     if (spacesError) throw spacesError;
@@ -145,6 +162,7 @@ Deno.serve(async (request) => {
     }
     const transcript = String(transcription.text ?? "").trim();
     if (!transcript) throw new Error("No spoken instruction was detected.");
+    if (commentTranscription) return json({ transcript });
 
     const completionResponse = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",

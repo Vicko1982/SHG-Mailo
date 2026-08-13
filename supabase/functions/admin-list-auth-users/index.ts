@@ -1,5 +1,5 @@
 // Edge function: admin-list-auth-users
-// Returns per-user created_at and last_sign_in_at from auth.users. Admin-only.
+// Returns per-user created_at and last_sign_in_at from auth.users. Victor-only.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
 const corsHeaders = {
@@ -62,14 +62,11 @@ Deno.serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-    const { data: roles } = await admin
-      .from("user_roles")
-      .select("role")
-      .eq("user_id", u.user.id);
-    const isAdmin = !!roles?.some((r) => r.role === "admin" || r.role === "main_admin");
-    if (!isAdmin) {
+    const { data: isVictor, error: victorError } = await admin
+      .rpc("is_victor_stavropoulos", { _user_id: u.user.id });
+    if (victorError || isVictor !== true) {
       return new Response(
-        JSON.stringify({ error: "Forbidden: admin role required" }),
+        JSON.stringify({ error: "Only Victor Stavropoulos can list authentication details" }),
         { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }

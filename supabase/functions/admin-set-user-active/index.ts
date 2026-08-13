@@ -1,5 +1,5 @@
 // Edge function: admin-set-user-active
-// Admin bans/unbans a user in auth and flags profiles.is_active.
+// Only Victor Stavropoulos bans/unbans a user and flags profiles.is_active.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
 const corsHeaders = {
@@ -47,15 +47,11 @@ Deno.serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-    const { data: callerRoles } = await admin
-      .from("user_roles")
-      .select("role")
-      .eq("user_id", u.user.id);
-    const isMainAdmin = !!callerRoles?.some((r) => r.role === "main_admin");
-    const isAdmin = isMainAdmin || !!callerRoles?.some((r) => r.role === "admin");
-    if (!isAdmin) {
+    const { data: isVictor, error: victorError } = await admin
+      .rpc("is_victor_stavropoulos", { _user_id: u.user.id });
+    if (victorError || isVictor !== true) {
       return new Response(
-        JSON.stringify({ error: "Forbidden: admin role required" }),
+        JSON.stringify({ error: "Only Victor Stavropoulos can activate or deactivate users" }),
         { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
@@ -72,22 +68,6 @@ Deno.serve(async (req) => {
       return new Response(
         JSON.stringify({ error: "Δεν μπορείτε να απενεργοποιήσετε τον εαυτό σας" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    }
-
-    // Administrators may activate/deactivate ordinary users only.
-    // A main_admin is required for changing another privileged account.
-    const { data: targetRoles } = await admin
-      .from("user_roles")
-      .select("role")
-      .eq("user_id", body.user_id);
-    const targetIsPrivileged = targetRoles?.some(
-      (r) => r.role === "main_admin" || r.role === "admin",
-    );
-    if (targetIsPrivileged && !isMainAdmin) {
-      return new Response(
-        JSON.stringify({ error: "Μόνο ο Main Admin μπορεί να αλλάξει την κατάσταση Administrator" }),
-        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
