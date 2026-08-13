@@ -7,6 +7,8 @@ const publicDir = join(root, "dist", "public");
 const serverDir = join(root, "dist", "server");
 const hostingDir = join(root, "dist", ".openai");
 const initialStateFile = join(sourceDir, "initial-state.json");
+// The same validated release source can produce either the temporary upgrade
+// screen or the normal production application.
 const maintenanceBuild = process.env.MAILO_MAINTENANCE_BUILD === "1";
 
 await rm(join(root, "dist"), { recursive: true, force: true });
