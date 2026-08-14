@@ -1,4 +1,4 @@
-const CACHE = 'shg-task-manager-v278';
+const CACHE = 'shg-task-manager-v2781';
 const COMMENT_ASSETS = Array.from({length:16},(_,index)=>`./jira-comments-${String(index+1).padStart(2,'0')}.js`);
 const ASSETS = ['./','./index.html','./styles.css','./jira-tasks.js','./victor-main-filter.js','./app.js','./version-51.js','./version-52.js','./version-53.js','./version-54.js','./version-55.js','./version-56.js','./version-57.js','./version-58.js','./version-59.js','./version-60.js','./version-62.js','./version-63.js','./version-64.js','./version-75.js','./version-75.css','./version-76-list.js','./version-76-core.js','./version-76-admin.js','./version-76-chat.js','./version-76-core.css','./version-76-chat.css','./version-77.js','./version-77.css','./version-78.js','./version-78.css','./manifest.webmanifest','./icons/app-icon.svg','./icons/mailo-logo.jpeg',...COMMENT_ASSETS];
 const STATIC_PATHS = new Set(ASSETS.map(asset => new URL(asset, self.location.origin).pathname));

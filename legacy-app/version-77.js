@@ -247,7 +247,11 @@
 
   function synchroniseCompletedWeekly77() {
     if (!pruneDoneWeeklyAssignments77()) return;
-    previousSave77.call(this);
+    // The database removes completed Weekly assignments during a legitimate
+    // Task write. On application startup this is only a local presentation
+    // cleanup; starting a background PATCH here can be rejected by RLS and
+    // repeatedly notify an otherwise idle user.
+    if (typeof window.shgWriteTaskCache === 'function') window.shgWriteTaskCache(state.tasks);
     if (state.appSection === 'tasks') render();
   }
 

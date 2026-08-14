@@ -1032,6 +1032,16 @@
     } catch (error) {
       console.error('SHG remote sync failed', error);
       window.dispatchEvent(new CustomEvent('shg:remote-error', { detail: { message: error.message } }));
+      // RLS/permission failures are permanent for the current request. Retrying
+      // them every 30 seconds cannot succeed without a permission or data
+      // change and only repeats the same warning to an idle user.
+      if (error.code === '42501' || error.status === 401 || error.status === 403) {
+        cache.queued = false;
+        if (cache.retryTimer) clearTimeout(cache.retryTimer);
+        cache.retryTimer = null;
+        cache.retryDelay = 3000;
+        return;
+      }
       if (!cache.retryTimer) {
         const retryIn = cache.retryDelay;
         cache.retryDelay = Math.min(cache.retryDelay * 2, 30000);
