@@ -1,0 +1,79 @@
+openapi: 3.1.0
+info:
+  title: Mailo Voice Tasks API
+  description: Prepare and confirm Tasks and Mini Tasks in Mailo.
+  version: 1.0.0
+servers:
+  - url: https://ewjalucwaeotamodlajs.supabase.co/functions/v1/voice-task-api
+security:
+  - bearerAuth: []
+paths:
+  /context:
+    get:
+      operationId: getMailoTaskContext
+      summary: Get current Mailo users, Spaces, defaults, and voice-task rules.
+      responses:
+        "200":
+          description: Current Task creation context.
+  /create:
+    post:
+      operationId: createMailoTask
+      summary: Create a Task after the user has already heard the summary and explicitly confirmed it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRequest"
+      responses:
+        "200":
+          description: Task created successfully.
+        "422":
+          description: A required field is missing, such as the Assignee for a Mini Task.
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    CreateRequest:
+      type: object
+      required: [type, title, confirmed, explicitFields]
+      properties:
+        type:
+          type: string
+          enum: [task, mini_task]
+          description: Use task only when the user says Task, and mini_task only when the user says Mini Task.
+        title:
+          type: string
+          description: A short, clear title. Move extra detail to description.
+        confirmed:
+          type: boolean
+          const: true
+          description: Set to true only after the user explicitly confirms the spoken summary.
+        description:
+          type: [string, "null"]
+          description: Remaining detail from a long voice request.
+        space:
+          type: [string, "null"]
+        assignee:
+          type: [string, "null"]
+          description: Required for Mini Tasks.
+        supervisor:
+          type: [string, "null"]
+        priority:
+          type: [string, "null"]
+          enum: [Highest, High, Medium, Low, Lowest, null]
+        dueDate:
+          type: [string, "null"]
+          format: date
+        labels:
+          type: array
+          items:
+            type: string
+        explicitFields:
+          type: array
+          description: Include only fields explicitly stated by the user. Always include title.
+          items:
+            type: string
+            enum: [title, description, space, assignee, supervisor, priority, dueDate, labels]

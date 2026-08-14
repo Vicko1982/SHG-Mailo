@@ -1,9 +1,7 @@
 // Edge function: admin-create-user
 // Creates a new auth user (with profile + role). Allowed only when:
 //  - No admin/main_admin exists yet (bootstrap → first user becomes main_admin), OR
-//  - The caller is authenticated and has the 'admin' or 'main_admin' role.
-// Admin and main_admin can create users and admins.
-// A second main_admin can never be created.
+//  - The caller is the authenticated permanent owner, Victor Stavropoulos.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
 const corsHeaders = {
@@ -17,24 +15,11 @@ type Role = "main_admin" | "admin" | "user";
 
 interface Payload {
   email: string;
-  password: string;
+  password?: string;
   full_name: string;
   role: Role;
-}
-
-function personalSpaceName(fullName: string): string {
-  const parts = fullName.trim().split(/\s+/).filter(Boolean);
-  if (parts.length < 2) return parts[0] ?? "Personal";
-  return `${parts[0]} ${Array.from(parts[parts.length - 1])[0]}`;
-}
-
-function personalSpaceKeyBase(fullName: string): string {
-  const parts = fullName.trim().split(/\s+/).filter(Boolean);
-  const firstInitial = Array.from(parts[0] ?? "P")[0] ?? "P";
-  const lastInitial = parts.length > 1
-    ? (Array.from(parts[parts.length - 1])[0] ?? "")
-    : "";
-  return `${firstInitial}${lastInitial}`.toLocaleUpperCase();
+  voice_names?: string[];
+  aliases?: string[];
 }
 
 Deno.serve(async (req) => {
@@ -59,35 +44,8 @@ Deno.serve(async (req) => {
       .in("role", ["admin", "main_admin"]);
     if (cErr) throw cErr;
 
-    let callerRole: Role | null = null;
-    const authHeader = req.headers.get("Authorization");
-    if (authHeader?.startsWith("Bearer ")) {
-      const token = authHeader.replace("Bearer ", "");
-      const userClient = createClient(SUPABASE_URL, ANON_KEY, {
-        global: { headers: { Authorization: `Bearer ${token}` } },
-        auth: { persistSession: false, autoRefreshToken: false },
-      });
-      const { data: u } = await userClient.auth.getUser(token);
-      if (u?.user) {
-        const { data: roles } = await admin
-          .from("user_roles")
-          .select("role")
-          .eq("user_id", u.user.id);
-        if (roles?.some((r) => r.role === "main_admin")) callerRole = "main_admin";
-        else if (roles?.some((r) => r.role === "admin")) callerRole = "admin";
-      }
-    }
-
-    const isBootstrap = (adminCount ?? 0) === 0;
-    if (!isBootstrap && !callerRole) {
-      return new Response(
-        JSON.stringify({ error: "Forbidden: admin role required" }),
-        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    }
-
     const body = (await req.json()) as Payload;
-    if (!body.email || !body.password || !body.full_name || !body.role) {
+    if (!body.email || !body.full_name || !body.role) {
       return new Response(JSON.stringify({ error: "Missing fields" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -100,26 +58,60 @@ Deno.serve(async (req) => {
       });
     }
 
-    // The bootstrap account is the permanent Main Admin. Afterwards, both
-    // administrators and the Main Admin may create admins, but never another
-    // Main Admin.
-    let finalRole: Role = body.role;
-    if (isBootstrap) {
-      finalRole = "main_admin";
-    } else if (body.role === "main_admin") {
+    let callerIsVictor = false;
+    const authHeader = req.headers.get("Authorization");
+    if (authHeader?.startsWith("Bearer ")) {
+      const token = authHeader.replace("Bearer ", "");
+      const userClient = createClient(SUPABASE_URL, ANON_KEY, {
+        global: { headers: { Authorization: `Bearer ${token}` } },
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+      const { data: u } = await userClient.auth.getUser(token);
+      if (u?.user) {
+        const { data: victorCheck, error: victorError } = await admin
+          .rpc("is_victor_stavropoulos", { _user_id: u.user.id });
+        callerIsVictor = !victorError && victorCheck === true;
+      }
+    }
+
+    const isBootstrap = (adminCount ?? 0) === 0;
+    if (isBootstrap && body.email.trim().toLowerCase() !== "victor@shd.global") {
       return new Response(
-        JSON.stringify({ error: "A Main Admin already exists and cannot be replaced" }),
+        JSON.stringify({ error: "The first MAILO account must be Victor Stavropoulos" }),
+        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+    if (!isBootstrap && !callerIsVictor) {
+      return new Response(
+        JSON.stringify({ error: "Only Victor Stavropoulos can create or configure users" }),
         { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
-    const { data: created, error: createErr } = await admin.auth.admin.createUser({
+    // The bootstrap account is the permanent Main Admin. Afterwards only an
+    // existing Main Admin may create another Main Admin.
+    let finalRole: Role = body.role;
+    if (isBootstrap) {
+      finalRole = "main_admin";
+    }
+
+    let { data: created, error: createErr } = await admin.auth.admin.createUser({
       email: body.email,
-      password: body.password,
+      password: body.password || `${crypto.randomUUID()}Aa1!`,
       email_confirm: true,
       user_metadata: { full_name: body.full_name },
     });
+    // Synchronization is idempotent: if Auth already knows this email, reuse
+    // that account and repair its profile/role instead of creating a duplicate.
     if (createErr || !created.user) {
+      const { data: existingUsers, error: listError } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
+      if (listError) throw listError;
+      const existing = existingUsers.users.find((user) =>
+        String(user.email || "").toLocaleLowerCase() === body.email.trim().toLocaleLowerCase()
+      );
+      if (existing) created = { user: existing };
+    }
+    if (!created.user) {
       return new Response(
         JSON.stringify({ error: createErr?.message ?? "Create failed" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
@@ -134,44 +126,34 @@ Deno.serve(async (req) => {
       id: userId,
       full_name: body.full_name,
       email: body.email,
+      voice_names: Array.isArray(body.voice_names) ? body.voice_names : [],
+      aliases: Array.isArray(body.aliases) ? body.aliases : [],
     });
 
-    // Every account owns exactly one private personal space. The database
-    // trigger normally creates it; this fallback also supports deployments
-    // where the Edge Function is updated before the migration is applied.
-    const { data: existingPersonalSpace } = await admin
-      .from("spaces")
-      .select("id")
-      .eq("type", "personal")
-      .eq("owner_id", userId)
-      .maybeSingle();
-    if (!existingPersonalSpace) {
-      const baseKey = personalSpaceKeyBase(body.full_name);
-      const { data: allSpaceKeys, error: keysError } = await admin
-        .from("spaces")
-        .select("key");
-      if (keysError) throw keysError;
-      const usedKeys = new Set((allSpaceKeys ?? []).map((space) => space.key));
-      let starCount = 1;
-      let personalKey = `${baseKey}*`;
-      while (usedKeys.has(personalKey)) {
-        starCount += 1;
-        personalKey = `${baseKey}${"*".repeat(starCount)}`;
-      }
-      const { error: personalSpaceError } = await admin.from("spaces").insert({
-        key: personalKey,
-        name: personalSpaceName(body.full_name),
-        type: "personal",
-        owner_id: userId,
-      });
-      if (personalSpaceError) throw personalSpaceError;
+    // Reset roles to the requested one. The permanent owner role itself is
+    // protected by a database trigger, so bootstrap/synchronization must keep
+    // that row and only remove accidental extra roles.
+    const { data: targetIsVictor, error: targetVictorError } = await admin
+      .rpc("is_victor_stavropoulos", { _user_id: userId });
+    if (targetVictorError) throw targetVictorError;
+    if (targetIsVictor === true) {
+      finalRole = "main_admin";
+      const { error: cleanupRoleError } = await admin
+        .from("user_roles")
+        .delete()
+        .eq("user_id", userId)
+        .neq("role", "main_admin");
+      if (cleanupRoleError) throw cleanupRoleError;
+    } else {
+      const { error: deleteRoleError } = await admin
+        .from("user_roles")
+        .delete()
+        .eq("user_id", userId);
+      if (deleteRoleError) throw deleteRoleError;
     }
-
-    // Reset roles to the requested one
-    await admin.from("user_roles").delete().eq("user_id", userId);
     const { error: roleErr } = await admin
       .from("user_roles")
-      .insert({ user_id: userId, role: finalRole });
+      .upsert({ user_id: userId, role: finalRole }, { onConflict: "user_id,role" });
     if (roleErr) {
       return new Response(JSON.stringify({ error: roleErr.message }), {
         status: 500,

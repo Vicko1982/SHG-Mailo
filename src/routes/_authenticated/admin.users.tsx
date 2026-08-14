@@ -27,6 +27,7 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { useImpersonation } from "@/lib/impersonation";
 import { useLanguage } from "@/lib/language";
+import { DIRECTORY_USERS, directoryUserId } from "@/lib/directory-users";
 
 export const Route = createFileRoute("/_authenticated/admin/users")({
   head: () => ({
@@ -50,6 +51,7 @@ interface Row {
   is_active: boolean;
   created_at: string | null;
   last_sign_in_at: string | null;
+  is_directory_only?: boolean;
 }
 
 type SortKey = "full_name" | "email" | "role" | "created_at" | "last_sign_in_at" | "is_active";
@@ -206,8 +208,7 @@ function AdminUsersPage() {
       (fnRes.data as { users?: Array<{ id: string; email: string | null; created_at: string | null; last_sign_in_at: string | null }> } | null)
         ?.users ?? [];
     authUsers.forEach((a) => authMap.set(a.id, { created_at: a.created_at, last_sign_in_at: a.last_sign_in_at, email: a.email }));
-    setUsers(
-      (profiles ?? []).map((p) => ({
+    const registered = (profiles ?? []).map((p) => ({
         id: p.id,
         full_name: p.full_name,
         email: p.email ?? authMap.get(p.id)?.email ?? null,
@@ -215,8 +216,23 @@ function AdminUsersPage() {
         is_active: (p as { is_active?: boolean }).is_active ?? true,
         created_at: authMap.get(p.id)?.created_at ?? null,
         last_sign_in_at: authMap.get(p.id)?.last_sign_in_at ?? null,
-      })),
+      }));
+    const registeredNames = new Set(
+      registered.map((profile) => profile.full_name?.trim().toLocaleLowerCase()).filter(Boolean),
     );
+    const directoryOnly: Row[] = DIRECTORY_USERS
+      .filter((fullName) => !registeredNames.has(fullName.toLocaleLowerCase()))
+      .map((fullName) => ({
+        id: directoryUserId(fullName),
+        full_name: fullName,
+        email: null,
+        role: "user",
+        is_active: false,
+        created_at: null,
+        last_sign_in_at: null,
+        is_directory_only: true,
+      }));
+    setUsers([...registered, ...directoryOnly]);
     setLoading(false);
   }
 
@@ -515,7 +531,9 @@ function AdminUsersPage() {
                   <TableCell data-user-column="full_name">{u.full_name ?? "—"}</TableCell>
                   <TableCell data-user-column="email">{u.email ?? "—"}</TableCell>
                   <TableCell data-user-column="role">
-                    {u.id === currentUser?.id || u.role === "main_admin" ? (
+                    {u.is_directory_only ? (
+                      <span className="text-sm text-muted-foreground">{tr("User · pending registration", "Χρήστης · εκκρεμεί εγγραφή")}</span>
+                    ) : u.id === currentUser?.id || u.role === "main_admin" ? (
                       <span className="capitalize text-sm text-muted-foreground">
                         {u.role ?? "—"}
                       </span>
@@ -542,7 +560,9 @@ function AdminUsersPage() {
                     {formatDT(u.last_sign_in_at, language === "el" ? "el-GR" : "en-GB")}
                   </TableCell>
                   <TableCell data-user-column="is_active">
-                    {activeBusyId === u.id ? (
+                    {u.is_directory_only ? (
+                      <Badge variant="secondary">{tr("Pending", "Σε αναμονή")}</Badge>
+                    ) : activeBusyId === u.id ? (
                       <Badge variant="secondary" className="gap-1.5">
                         <Loader2 className="h-3 w-3 animate-spin" /> {tr("Updating…", "Ενημέρωση…")}
                       </Badge>
@@ -558,7 +578,7 @@ function AdminUsersPage() {
                   </TableCell>
                   <TableCell data-user-column="actions" className="text-right">
                     <div className="flex flex-wrap justify-end gap-2">
-                      {isMainAdmin && (
+                      {!u.is_directory_only && isMainAdmin && (
                         <Button
                           size="sm"
                           variant="outline"
@@ -571,7 +591,7 @@ function AdminUsersPage() {
                           {tr("Rename", "Μετονομασία")}
                         </Button>
                       )}
-                      {u.id !== currentUser?.id && (
+                      {!u.is_directory_only && u.id !== currentUser?.id && (
                         <>
                         {isMainAdmin && (
                           <Button

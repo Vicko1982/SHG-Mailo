@@ -77,8 +77,8 @@ function SettingsPage() {
         <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">{tr("Priorities", "Προτεραιότητες")}</h2>
         <div className="border rounded-md bg-card p-3 flex flex-wrap gap-3">
           {ALL_PRIORITIES.map((p) => (
-            <span key={p} className={`inline-flex items-center gap-1.5 text-xs ${PRIORITY_META[p]?.className ?? ""}`}>
-              <span>{PRIORITY_META[p]?.icon}</span> {p}
+            <span key={p} className={`inline-flex items-center text-xs ${PRIORITY_META[p]?.className ?? ""}`}>
+              {p}
             </span>
           ))}
         </div>

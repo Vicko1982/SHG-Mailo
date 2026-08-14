@@ -44,11 +44,11 @@ import { SpaceDialog } from "@/components/space-dialog";
 import { useImpersonation } from "@/lib/impersonation";
 import { useLanguage } from "@/lib/language";
 
-const GROUP_STATE_KEY = "shg.sidebarGroups";
+const GROUP_STATE_KEY = "shg.sidebarGroups.v2";
 
 function useGroupState() {
   const [open, setOpen] = useState<Record<string, boolean>>({
-    main: true, shared: true, personal: true, admin: true,
+    main: true, shared: false, personal: false, admin: true,
   });
   useEffect(() => {
     try {

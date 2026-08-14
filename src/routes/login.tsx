@@ -8,6 +8,7 @@ import { Card } from "@/components/ui/card";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useLanguage } from "@/lib/language";
+import { createEmailOnlyLogin } from "@/lib/demo-auth.functions";
 
 export const Route = createFileRoute("/login")({
   head: () => ({
@@ -28,11 +29,6 @@ function LoginPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-
-  // Magic-link step (για admin / main_admin)
-  const [magicLinkStep, setMagicLinkStep] = useState(false);
-  const [magicLinkEmail, setMagicLinkEmail] = useState("");
 
   // Bootstrap (πρώτος admin)
   const [bootstrapAvailable, setBootstrapAvailable] = useState(false);
@@ -55,59 +51,21 @@ function LoginPage() {
   async function handleLogin(e: FormEvent) {
     e.preventDefault();
     setLoading(true);
-    const { data: signInData, error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error || !signInData.user) {
-      setLoading(false);
-      toast.error(error?.message ?? tr("Login failed", "Σφάλμα σύνδεσης"));
-      return;
-    }
-
-    // Ελέγχουμε αν ο χρήστης είναι admin/main_admin -> απαιτείται magic link
-    const { data: roles } = await supabase
-      .from("user_roles")
-      .select("role")
-      .eq("user_id", signInData.user.id);
-    const isPrivileged = (roles ?? []).some(
-      (r) => r.role === "admin" || r.role === "main_admin",
-    );
-
-    if (!isPrivileged) {
-      setLoading(false);
+    const normalizedEmail = email.trim().toLowerCase();
+    try {
+      const { tokenHash } = await createEmailOnlyLogin({ data: { email: normalizedEmail } });
+      const { error } = await supabase.auth.verifyOtp({
+        token_hash: tokenHash,
+        type: "magiclink",
+      });
+      if (error) throw error;
       toast.success(tr("Welcome!", "Καλωσόρισες!"));
-      router.navigate({ to: "/" });
-      return;
+      router.navigate({ to: "/", replace: true });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : tr("Login failed", "Σφάλμα σύνδεσης"));
+    } finally {
+      setLoading(false);
     }
-
-    // Admin: αποσυνδέουμε και στέλνουμε magic link στο email
-    await supabase.auth.signOut();
-    const { error: magicLinkError } = await supabase.auth.signInWithOtp({
-      email,
-      options: {
-        shouldCreateUser: false,
-        emailRedirectTo: `${window.location.origin}/`,
-      },
-    });
-    setLoading(false);
-    if (magicLinkError) {
-      toast.error(magicLinkError.message);
-      return;
-    }
-    setMagicLinkEmail(email);
-    setMagicLinkStep(true);
-    setPassword("");
-    toast.success(tr("A sign-in link was sent to your email.", "Στάλθηκε σύνδεσμος σύνδεσης στο email σου."));
-  }
-
-  async function handleResendMagicLink() {
-    const { error } = await supabase.auth.signInWithOtp({
-      email: magicLinkEmail,
-      options: {
-        shouldCreateUser: false,
-        emailRedirectTo: `${window.location.origin}/`,
-      },
-    });
-    if (error) toast.error(error.message);
-    else toast.success(tr("A new sign-in link was sent.", "Στάλθηκε νέος σύνδεσμος σύνδεσης."));
   }
 
   async function handleBootstrap(e: FormEvent) {
@@ -141,28 +99,7 @@ function LoginPage() {
           </p>
         </div>
         <Card className="p-6">
-          {magicLinkStep ? (
-            <div className="space-y-4">
-              <div>
-                <h2 className="font-semibold">{tr("Administrator verification", "Επαλήθευση διαχειριστή")}</h2>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {tr("We sent a secure link to", "Στείλαμε έναν ασφαλή σύνδεσμο στο")} <strong>{magicLinkEmail}</strong>.
-                  {tr(" Open the email and click the link to return to the browser and sign in automatically.", " Άνοιξε το email και πάτησε τον σύνδεσμο για να επιστρέψεις στον browser και να συνδεθείς αυτόματα.")}
-                </p>
-              </div>
-              <div className="rounded-md border bg-muted/50 p-3 text-xs text-muted-foreground">
-                {tr("You do not need to enter a code on this page. If you cannot find the email, check your spam folder.", "Δεν χρειάζεται να εισαγάγεις κωδικό σε αυτή τη σελίδα. Αν δεν βλέπεις το email, έλεγξε και τον φάκελο ανεπιθύμητης αλληλογραφίας.")}
-              </div>
-              <div className="flex justify-between text-xs">
-                <button type="button" className="text-muted-foreground hover:underline" onClick={() => setMagicLinkStep(false)}>
-                  ← {tr("Back", "Πίσω")}
-                </button>
-                <button type="button" className="text-muted-foreground hover:underline" onClick={handleResendMagicLink}>
-                  {tr("Resend link", "Επαναποστολή συνδέσμου")}
-                </button>
-              </div>
-            </div>
-          ) : showBootstrap && bootstrapAvailable ? (
+          {showBootstrap && bootstrapAvailable ? (
             <form onSubmit={handleBootstrap} className="space-y-4">
               <div>
                 <h2 className="font-semibold">{tr("Create first administrator", "Δημιουργία πρώτου διαχειριστή")}</h2>
@@ -200,23 +137,15 @@ function LoginPage() {
                   onChange={(e) => setEmail(e.target.value)}
                 />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="login-password">{tr("Password", "Κωδικός")}</Label>
-                <Input
-                  id="login-password"
-                  type="password"
-                  required
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                />
-              </div>
               <Button type="submit" className="w-full" disabled={loading}>
                 {loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                 {tr("Sign in", "Σύνδεση")}
               </Button>
               <p className="text-xs text-muted-foreground text-center pt-2">
-                {tr("Access is restricted to Smart Homes users. Contact an administrator to create an account.", "Πρόσβαση μόνο για χρήστες της Smart Homes. Επικοινώνησε με τον διαχειριστή για δημιουργία λογαριασμού.")}
+                {tr(
+                  "Temporary email-only login. Email verification will be enabled later.",
+                  "Προσωρινή σύνδεση μόνο με email. Η επαλήθευση email θα ενεργοποιηθεί αργότερα.",
+                )}
               </p>
             </form>
           )}

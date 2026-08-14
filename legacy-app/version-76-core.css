@@ -1,0 +1,51 @@
+.star-column76,
+.star-cell76 {
+  width: 52px;
+  min-width: 52px;
+  max-width: 52px;
+  text-align: center;
+}
+
+.task-star76,
+.task-star-detail76 {
+  border: 1px solid #d7dfec;
+  background: #fff;
+  color: #94a3b8;
+  cursor: pointer;
+}
+
+.task-star76 {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 10px;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.task-star76.active,
+.task-star-detail76.active {
+  border-color: #f5c94a;
+  background: #fff8d7;
+  color: #e5a800;
+}
+
+.task-star-detail76 {
+  margin: 0 0 14px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-weight: 800;
+}
+
+.show-all-tasks-btn {
+  margin-left: 8px;
+}
+
+@media (max-width: 850px) {
+  .task-pagination > div {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    justify-content: flex-end;
+  }
+}

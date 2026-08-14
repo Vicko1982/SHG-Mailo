@@ -1,0 +1,100 @@
+/* MAILO Version 76 — mobile search, mention picker and clickable message links. */
+.task-chat-mention-menu76 {
+  position: absolute !important;
+  z-index: 1400 !important;
+  right: 12px !important;
+  bottom: calc(100% - 2px) !important;
+  left: 12px !important;
+  top: auto !important;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  max-height: 280px !important;
+  margin: 0 0 7px !important;
+  overflow-x: hidden;
+  overflow-y: auto !important;
+  overscroll-behavior: contain;
+}
+
+.task-chat-mention-menu76[hidden],
+.task-chat-mention-menu76:empty {
+  display: none !important;
+}
+
+.task-chat-mention-menu76 button {
+  display: grid !important;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  min-height: 44px;
+  padding: 8px 10px;
+  white-space: nowrap;
+}
+
+.task-chat-mention-menu76 button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 13px;
+}
+
+.task-chat-mention-menu76 button.mention-active {
+  background: #dfeaff;
+  color: #245bc5;
+  box-shadow: inset 3px 0 #356df3;
+}
+
+.task-chat-thread[hidden],
+.task-chat-search-empty76[hidden] {
+  display: none !important;
+}
+
+.mailo-external-link76 {
+  color: #1764d8;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.mailo-external-link76:focus-visible {
+  border-radius: 3px;
+  outline: 3px solid rgb(59 130 246 / 24%);
+  outline-offset: 2px;
+}
+
+@media (max-width: 850px) {
+  body.mailo-tasks-open57 .topbar .search-wrap {
+    display: flex !important;
+    align-items: center;
+    width: 100%;
+    min-width: 0;
+  }
+
+  body.mailo-tasks-open57 .topbar .search-wrap input {
+    min-width: 0;
+    min-height: 42px;
+    font-size: 16px;
+  }
+
+  .task-chat-mention-menu76 {
+    position: fixed !important;
+    z-index: 1500 !important;
+    right: 10px !important;
+    bottom: calc(76px + env(safe-area-inset-bottom)) !important;
+    left: 10px !important;
+    width: auto !important;
+    max-height: min(42dvh, 310px) !important;
+    margin: 0 !important;
+  }
+}
+
+@media (max-width: 430px) {
+  body.mailo-tasks-open57 .topbar {
+    grid-template-columns: 42px auto minmax(120px, 1fr);
+  }
+
+  body.mailo-tasks-open57 .topbar .mobile-brand {
+    font-size: 15px;
+  }
+}

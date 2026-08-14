@@ -19,9 +19,11 @@ export const addComment = createServerFn({ method: "POST" })
   .inputValidator((d: { taskId: string; content: string }) => d)
   .handler(async ({ data, context }) => {
     if (!data.content.trim()) throw new Error("Empty comment");
-    const { error } = await context.supabase
+    const { data: inserted, error } = await context.supabase
       .from("task_comments")
-      .insert({ task_id: data.taskId, content: data.content, author_id: context.userId });
+      .insert({ task_id: data.taskId, content: data.content, author_id: context.userId })
+      .select("id")
+      .single();
     if (error) throw new Error(error.message);
     const { data: t } = await context.supabase
       .from("tasks").select("title").eq("id", data.taskId).maybeSingle();
@@ -31,5 +33,14 @@ export const addComment = createServerFn({ method: "POST" })
       task_id: data.taskId,
       task_title: t?.title ?? null,
     });
-    return { ok: true };
+    const { data: notification, error: notificationError } = await context.supabase.functions.invoke(
+      "send-mention-email",
+      { body: { taskId: data.taskId, commentId: inserted.id } },
+    );
+    return {
+      ok: true,
+      notification: notificationError
+        ? { sent: 0, failed: 0, error: notificationError.message }
+        : notification,
+    };
   });

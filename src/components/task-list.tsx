@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { useState, useMemo, useRef, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useState, useMemo, useRef, type PointerEvent as ReactPointerEvent } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -27,6 +27,13 @@ import { useAuth } from "@/lib/auth-context";
 type ColumnKey = TaskSortKey | "assignee" | "space" | "labels";
 type Col = { key: ColumnKey; label: string; width: number };
 type SortRule = { key: ColumnKey; direction: "asc" | "desc" };
+type DropMode = "before" | "child" | "after";
+type PointerTaskDrag = {
+  taskId: string;
+  startX: number;
+  startY: number;
+  active: boolean;
+};
 
 const COLUMNS: Col[] = [
   { key: "task_key", label: "Key", width: 120 },
@@ -65,12 +72,18 @@ export function TaskList({
     Object.fromEntries(COLUMNS.map((column) => [column.key, column.width])) as Record<ColumnKey, number>,
   );
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ taskId: string; mode: DropMode } | null>(null);
+  const [standaloneDropActive, setStandaloneDropActive] = useState(false);
+  const [manualOrder, setManualOrder] = useState<string[]>([]);
   const [page, setPage] = useState(1);
   const [openTaskKey, setOpenTaskKey] = useState<string | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const draggedTaskIdRef = useRef<string | null>(null);
+  const pointerTaskDragRef = useRef<PointerTaskDrag | null>(null);
+  const pointerTaskDragCleanupRef = useRef<(() => void) | null>(null);
   const pageSize = 50;
 
   const fetchTasks = useServerFn(listTasks);
@@ -81,12 +94,25 @@ export function TaskList({
   const editTask = useServerFn(updateTaskFields);
   const placeTask = useServerFn(setTaskPlacement);
   const qc = useQueryClient();
-  const { isAdmin } = useAuth();
+  const { isAdmin, user } = useAuth();
   const { impersonatedUserId, isImpersonating } = useImpersonation();
+  const orderStorageKey = useMemo(
+    () => `shg.taskOrder.${user?.id ?? "anonymous"}.${spaceKey ?? scope ?? "all"}`,
+    [scope, spaceKey, user?.id],
+  );
+
+  useEffect(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem(orderStorageKey) ?? "[]");
+      setManualOrder(Array.isArray(stored) ? stored.filter((id) => typeof id === "string") : []);
+    } catch {
+      setManualOrder([]);
+    }
+  }, [orderStorageKey]);
 
   const filters: TaskFilters = {
     spaceKey, scope, statuses, priorities, assigneeIds,
-    search, page, pageSize,
+    search, page: 1, pageSize: 5000,
     sortBy: sorts[0] && !["assignee", "space", "labels"].includes(sorts[0].key)
       ? sorts[0].key as TaskSortKey
       : "updated_at",
@@ -132,10 +158,12 @@ export function TaskList({
       placeTask({ data }),
     onSuccess: () => {
       toast.success(tr("Task hierarchy updated", "Η ιεραρχία της εργασίας ενημερώθηκε"));
+      draggedTaskIdRef.current = null;
       setDraggedTaskId(null);
       qc.invalidateQueries({ queryKey: ["tasks"] });
     },
     onError: (error: Error) => {
+      draggedTaskIdRef.current = null;
       setDraggedTaskId(null);
       toast.error(error.message);
     },
@@ -208,28 +236,229 @@ export function TaskList({
         return !query || value(task, column.key).toLocaleLowerCase().includes(query);
       })
     );
-    if (sorts.length === 0) return filtered;
-    return [...filtered].sort((a, b) => {
-      for (const rule of sorts) {
-        const direction = rule.direction === "asc" ? 1 : -1;
-        let comparison: number;
-        if (rule.key === "status") {
-          comparison = statusOrder.indexOf(a.status) - statusOrder.indexOf(b.status);
-        } else if (rule.key === "priority") {
-          comparison = priorityOrder.indexOf(a.priority) - priorityOrder.indexOf(b.priority);
-        } else {
-          comparison = value(a, rule.key).localeCompare(value(b, rule.key), undefined, {
-            sensitivity: "base",
-            numeric: true,
-          });
+    const ordered = [...filtered];
+    if (sorts.length > 0) {
+      ordered.sort((a, b) => {
+        for (const rule of sorts) {
+          const direction = rule.direction === "asc" ? 1 : -1;
+          let comparison: number;
+          if (rule.key === "status") {
+            comparison = statusOrder.indexOf(a.status) - statusOrder.indexOf(b.status);
+          } else if (rule.key === "priority") {
+            comparison = priorityOrder.indexOf(a.priority ?? "") - priorityOrder.indexOf(b.priority ?? "");
+          } else {
+            comparison = value(a, rule.key).localeCompare(value(b, rule.key), undefined, {
+              sensitivity: "base",
+              numeric: true,
+            });
+          }
+          if (comparison !== 0) return comparison * direction;
         }
-        if (comparison !== 0) return comparison * direction;
-      }
-      return 0;
+        return 0;
+      });
+    } else if (manualOrder.length > 0) {
+      const rank = new Map(manualOrder.map((id, index) => [id, index]));
+      ordered.sort((a, b) => {
+        const aRank = rank.get(a.id);
+        const bRank = rank.get(b.id);
+        if (aRank === undefined && bRank === undefined) return 0;
+        if (aRank === undefined) return 1;
+        if (bRank === undefined) return -1;
+        return aRank - bRank;
+      });
+    }
+
+    const visibleIds = new Set(ordered.map((task) => task.id));
+    const children = new Map<string, typeof ordered>();
+    ordered.forEach((task) => {
+      if (!task.parent_id || !visibleIds.has(task.parent_id)) return;
+      const list = children.get(task.parent_id) ?? [];
+      list.push(task);
+      children.set(task.parent_id, list);
     });
-  }, [rows, columnFilters, sorts]);
-  const total = data?.count ?? 0;
+    const grouped: typeof ordered = [];
+    ordered.forEach((task) => {
+      if (task.parent_id && visibleIds.has(task.parent_id)) return;
+      grouped.push(task, ...(children.get(task.id) ?? []));
+    });
+    return grouped;
+  }, [rows, columnFilters, sorts, manualOrder]);
+  const total = displayedRows.length;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const pageRows = displayedRows.slice((page - 1) * pageSize, page * pageSize);
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
+
+  const persistManualOrder = (order: string[]) => {
+    setManualOrder(order);
+    try {
+      localStorage.setItem(orderStorageKey, JSON.stringify(order));
+    } catch {
+      // Keep the in-memory order if browser preference storage is unavailable.
+    }
+  };
+
+  const reorderTask = (sourceId: string, targetId: string, mode: "before" | "after") => {
+    const ids = displayedRows.map((task) => task.id).filter((id) => id !== sourceId);
+    const targetIndex = ids.indexOf(targetId);
+    if (targetIndex < 0) return;
+    ids.splice(targetIndex + (mode === "after" ? 1 : 0), 0, sourceId);
+    setSorts([]);
+    persistManualOrder(ids);
+    toast.success(tr("Task position updated", "Η θέση της εργασίας ενημερώθηκε"));
+  };
+
+  const dropModeForRow = (row: HTMLTableRowElement, clientY: number): DropMode => {
+    const rect = row.getBoundingClientRect();
+    const ratio = (clientY - rect.top) / Math.max(rect.height, 1);
+    if (ratio < 0.3) return "before";
+    if (ratio > 0.7) return "after";
+    return "child";
+  };
+
+  const clearTaskDrag = () => {
+    draggedTaskIdRef.current = null;
+    pointerTaskDragRef.current = null;
+    setDraggedTaskId(null);
+    setDropTarget(null);
+    setStandaloneDropActive(false);
+  };
+
+  useEffect(() => () => pointerTaskDragCleanupRef.current?.(), []);
+
+  const pointerDropTarget = (clientX: number, clientY: number) => {
+    const element = document.elementFromPoint(clientX, clientY);
+    const standalone = element?.closest<HTMLElement>("[data-task-standalone-drop]");
+    if (standalone) return { standalone: true as const };
+    const row = element?.closest<HTMLTableRowElement>("tr[data-task-row-id]");
+    const taskId = row?.dataset.taskRowId;
+    if (!row || !taskId) return null;
+    return { standalone: false as const, taskId, mode: dropModeForRow(row, clientY) };
+  };
+
+  const completeTaskDrop = (
+    sourceId: string,
+    target: { standalone: true } | { standalone: false; taskId: string; mode: DropMode } | null,
+  ) => {
+    const source = rows.find((task) => task.id === sourceId);
+    if (!source || !target) {
+      clearTaskDrag();
+      return;
+    }
+    if (target.standalone) {
+      if (!source.parent_id) {
+        clearTaskDrag();
+        return;
+      }
+      if (window.confirm(tr(
+        "Make this subtask a standalone task?",
+        "Να γίνει αυτή η υποεργασία αυτόνομη εργασία;",
+      ))) {
+        placementMutation.mutate({ taskId: sourceId, parentTaskId: null });
+      } else {
+        clearTaskDrag();
+      }
+      return;
+    }
+    if (sourceId === target.taskId) {
+      clearTaskDrag();
+      return;
+    }
+    const targetTask = rows.find((task) => task.id === target.taskId);
+    if (!targetTask) {
+      clearTaskDrag();
+      return;
+    }
+    if (target.mode === "child") {
+      const confirmed = window.confirm(tr(
+        `Are you sure you want ${source.task_key} to become a subtask of ${targetTask.task_key}?`,
+        `Είστε βέβαιοι ότι θέλετε το ${source.task_key} να γίνει υποεργασία του ${targetTask.task_key};`,
+      ));
+      if (confirmed) {
+        placementMutation.mutate({ taskId: sourceId, parentTaskId: targetTask.id });
+      } else {
+        clearTaskDrag();
+      }
+      return;
+    }
+    if (source.parent_id) {
+      const confirmed = window.confirm(tr(
+        "Move this subtask out of its parent and make it a standalone task?",
+        "Να αφαιρεθεί αυτή η υποεργασία από τη γονική εργασία και να γίνει αυτόνομη;",
+      ));
+      if (!confirmed) {
+        clearTaskDrag();
+        return;
+      }
+      placementMutation.mutate({ taskId: sourceId, parentTaskId: null });
+    }
+    reorderTask(sourceId, targetTask.id, target.mode);
+    clearTaskDrag();
+  };
+
+  const beginPointerTaskDrag = (taskId: string, event: ReactPointerEvent<HTMLSpanElement>) => {
+    if (isImpersonating || event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    clearClickTimer();
+    setEditingTaskId(null);
+
+    pointerTaskDragCleanupRef.current?.();
+    pointerTaskDragRef.current = {
+      taskId,
+      startX: event.clientX,
+      startY: event.clientY,
+      active: false,
+    };
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const drag = pointerTaskDragRef.current;
+      if (!drag) return;
+      const distance = Math.hypot(moveEvent.clientX - drag.startX, moveEvent.clientY - drag.startY);
+      if (!drag.active && distance < 6) return;
+      moveEvent.preventDefault();
+      if (!drag.active) {
+        drag.active = true;
+        draggedTaskIdRef.current = drag.taskId;
+        setDraggedTaskId(drag.taskId);
+      }
+      const target = pointerDropTarget(moveEvent.clientX, moveEvent.clientY);
+      setStandaloneDropActive(Boolean(target?.standalone));
+      setDropTarget(target && !target.standalone && target.taskId !== drag.taskId
+        ? { taskId: target.taskId, mode: target.mode }
+        : null);
+    };
+
+    const cleanup = () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerEnd);
+      window.removeEventListener("pointercancel", handlePointerCancel);
+      pointerTaskDragCleanupRef.current = null;
+    };
+
+    const handlePointerEnd = (upEvent: PointerEvent) => {
+      const drag = pointerTaskDragRef.current;
+      cleanup();
+      if (!drag?.active) {
+        clearTaskDrag();
+        return;
+      }
+      upEvent.preventDefault();
+      completeTaskDrop(drag.taskId, pointerDropTarget(upEvent.clientX, upEvent.clientY));
+    };
+
+    const handlePointerCancel = () => {
+      cleanup();
+      clearTaskDrag();
+    };
+
+    pointerTaskDragCleanupRef.current = cleanup;
+    window.addEventListener("pointermove", handlePointerMove, { passive: false });
+    window.addEventListener("pointerup", handlePointerEnd);
+    window.addEventListener("pointercancel", handlePointerCancel);
+  };
 
   const activeFilterCount = useMemo(() => {
     let n = 0;
@@ -456,21 +685,23 @@ export function TaskList({
 
       {/* Table */}
       {draggedTaskId && (
-        <div
-          className="rounded-md border-2 border-dashed border-primary/50 bg-primary/5 p-3 text-center text-sm font-medium"
-          onDragOver={(event) => event.preventDefault()}
-          onDrop={(event) => {
-            event.preventDefault();
-            if (!draggedTaskId) return;
-            if (window.confirm(tr(
-              "Make this subtask a standalone task?",
-              "Να γίνει αυτή η υποεργασία αυτόνομη εργασία;",
-            ))) {
-              placementMutation.mutate({ taskId: draggedTaskId, parentTaskId: null });
-            }
-          }}
-        >
-          {tr("Drop here to make it a standalone task", "Αφήστε εδώ για να γίνει αυτόνομη εργασία")}
+        <div className="fixed bottom-6 right-6 z-50 w-[min(28rem,calc(100vw-3rem))] space-y-2 rounded-md border border-primary/40 bg-background/95 p-2 shadow-xl backdrop-blur">
+          <div className="text-center text-xs font-medium text-muted-foreground">
+            {tr(
+              "Drop above or below a row to reposition · Drop in the centre to create a subtask",
+              "Αφήστε πάνω ή κάτω από μια γραμμή για αλλαγή θέσης · Αφήστε στο κέντρο για δημιουργία υποεργασίας",
+            )}
+          </div>
+          <div
+            data-task-standalone-drop
+            className={`rounded-md border-2 border-dashed p-2 text-center text-sm font-medium transition-colors ${
+              standaloneDropActive
+                ? "border-primary bg-primary/15"
+                : "border-primary/50 bg-primary/5"
+            }`}
+          >
+            {tr("Drop here to make it a standalone task", "Αφήστε εδώ για να γίνει αυτόνομη εργασία")}
+          </div>
         </div>
       )}
       <div className="border rounded-md overflow-auto bg-card">
@@ -563,37 +794,22 @@ export function TaskList({
                 </td>
               </tr>
             ) : (
-              displayedRows.map((t, i) => (
+              pageRows.map((t, i) => (
                 <tr
                   key={t.id}
-                  draggable={!isImpersonating}
-                  onDragStart={(event) => {
-                    setDraggedTaskId(t.id);
-                    event.dataTransfer.effectAllowed = "move";
-                    event.dataTransfer.setData("text/task-id", t.id);
-                  }}
-                  onDragEnd={() => setDraggedTaskId(null)}
-                  onDragOver={(event) => {
-                    if (draggedTaskId && draggedTaskId !== t.id) {
-                      event.preventDefault();
-                      event.dataTransfer.dropEffect = "move";
-                    }
-                  }}
-                  onDrop={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    const sourceId = draggedTaskId || event.dataTransfer.getData("text/task-id");
-                    if (!sourceId || sourceId === t.id) return;
-                    const source = rows.find((task) => task.id === sourceId);
-                    const confirmed = window.confirm(tr(
-                      `Are you sure you want ${source?.task_key ?? "this task"} to become a subtask of ${t.task_key}?`,
-                      `Είστε βέβαιοι ότι θέλετε το ${source?.task_key ?? "task"} να γίνει υποεργασία του ${t.task_key};`,
-                    ));
-                    if (confirmed) placementMutation.mutate({ taskId: sourceId, parentTaskId: t.id });
-                    else setDraggedTaskId(null);
-                  }}
+                  data-task-row-id={t.id}
                   className={`cursor-pointer border-b transition-colors ${
-                    selectedTaskId === t.id
+                    dropTarget?.taskId === t.id && dropTarget.mode === "before"
+                      ? "border-t-2 border-t-primary "
+                      : dropTarget?.taskId === t.id && dropTarget.mode === "after"
+                        ? "border-b-2 border-b-primary "
+                        : dropTarget?.taskId === t.id
+                          ? "outline outline-2 outline-primary/70 bg-primary/10 "
+                          : ""
+                  }${
+                    draggedTaskId === t.id
+                      ? "opacity-45 "
+                      : selectedTaskId === t.id
                       ? "bg-primary/10 ring-1 ring-inset ring-primary/30"
                       : i % 2 === 0
                         ? "bg-background hover:bg-accent/50"
@@ -644,7 +860,26 @@ export function TaskList({
                       />
                     ) : (
                       <div className={`truncate flex items-center gap-1 ${t.parent_id ? "pl-5" : ""}`} title={t.title}>
-                        <GripVertical className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          data-task-drag-handle
+                          aria-label={tr(`Drag ${t.task_key}`, `Μετακίνηση ${t.task_key}`)}
+                          title={tr(
+                            "Drag to reposition. Drop in the centre of another task to make it a subtask.",
+                            "Σύρετε για αλλαγή θέσης. Αφήστε στο κέντρο άλλης εργασίας για να γίνει υποεργασία.",
+                          )}
+                          onClick={(event) => event.stopPropagation()}
+                          onDoubleClick={(event) => event.stopPropagation()}
+                          onPointerDown={(event) => beginPointerTaskDrag(t.id, event)}
+                          className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded border border-transparent select-none ${
+                            isImpersonating
+                              ? "cursor-not-allowed opacity-35"
+                              : "touch-none cursor-grab hover:border-border hover:bg-accent active:cursor-grabbing"
+                          }`}
+                        >
+                          <GripVertical className="h-4 w-4 text-muted-foreground" />
+                        </span>
                         {t.parent_id && <span className="text-muted-foreground">↳</span>}
                         <span className="truncate">{t.title}</span>
                       </div>
@@ -689,8 +924,8 @@ export function TaskList({
                   </td>
                   <td data-task-column="priority" className="px-3 py-1.5 border-r">
                     {t.priority ? (
-                      <span className={`inline-flex items-center gap-1 text-xs ${PRIORITY_META[t.priority]?.className ?? ""}`}>
-                        <span>{PRIORITY_META[t.priority]?.icon}</span> {t.priority}
+                      <span className={`inline-flex items-center text-xs ${PRIORITY_META[t.priority]?.className ?? ""}`}>
+                        {t.priority}
                       </span>
                     ) : (
                       <span className="text-xs text-muted-foreground">—</span>

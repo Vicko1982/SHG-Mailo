@@ -1,1 +1,13 @@
-project_id = "ufzlwcnqcmhgpdosktdr"
+project_id = "ewjalucwaeotamodlajs"
+
+[functions.voice-task-api]
+verify_jwt = false
+
+[functions.voice-realtime-session]
+verify_jwt = false
+
+[functions.siri-voice-task]
+verify_jwt = false
+
+[functions.import-voice-memo]
+verify_jwt = false

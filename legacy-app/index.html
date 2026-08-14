@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="SHG Task Manager — task and team management" />
+    <meta name="theme-color" content="#10233f" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Mailo" />
+    <title>SHG Task Manager</title>
+    <link id="appManifest" rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" href="icons/app-icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="icons/mailo-logo.jpeg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css?v=262" />
+    <link rel="stylesheet" href="version-63.css?v=63" />
+    <link rel="stylesheet" href="version-75.css?v=275" />
+    <link rel="stylesheet" href="version-76-core.css?v=276" />
+    <link rel="stylesheet" href="version-76-chat.css?v=276" />
+    <link rel="stylesheet" href="version-77.css?v=277" />
+    <link rel="stylesheet" href="version-78.css?v=278" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <button id="sidebarToggle" class="sidebar-toggle" type="button" aria-label="Collapse sidebar" title="Collapse sidebar">‹</button>
+      <aside class="sidebar">
+        <div class="brand">
+          <img class="brand-logo" src="icons/mailo-logo.jpeg" alt="Mailo" />
+        </div>
+
+        <button id="newTaskBtn" class="sidebar-new-task" type="button"><span>+</span> New task</button>
+        <button id="miniTaskBtn" class="sidebar-new-task sidebar-mini-task" type="button"><span>+</span> Mini Task</button>
+        <button id="voiceMemoImportBtn" class="sidebar-new-task sidebar-voice-memos" type="button">
+          <span aria-hidden="true">♪</span> Import Voice Memos
+        </button>
+        <a class="sidebar-new-task sidebar-voice-memos" href="record-task.html"><span aria-hidden="true">●</span> Voice Recorder</a>
+        <input id="voiceMemoFiles" class="hidden" type="file" accept=".m4a,audio/mp4,audio/x-m4a,audio/mpeg,audio/wav,audio/webm" multiple>
+
+        <nav class="main-nav" aria-label="Main navigation">
+          <button class="nav-item" data-view="board"><span>▦</span> Tasks</button>
+          <button class="nav-item" data-view="chat"><span>◌</span> Task Chat <b id="chatUnreadBadge" class="nav-unread-badge hidden">0</b></button>
+          <button class="nav-item active" data-view="overview"><span>⌂</span> Overview</button>
+          <button class="nav-item admin-only" data-view="users"><span>♟</span> Users</button>
+          <button class="nav-item admin-only" data-view="spaces"><span>◆</span> Spaces</button>
+          <button class="nav-item admin-only" data-view="activity"><span>≣</span> Activity Log</button>
+        </nav>
+
+        <div class="sidebar-section">
+          <div id="projectList"></div>
+        </div>
+
+        <div id="sidebarUserMenu" class="sidebar-user-menu hidden" role="menu">
+          <button id="logoutBtn" type="button" role="menuitem"><span>↪</span> Logout</button>
+        </div>
+        <button id="sidebarUserButton" class="sidebar-footer" type="button" aria-haspopup="menu" aria-expanded="false">
+          <div id="currentUserAvatar" class="avatar">…</div>
+          <div class="user-meta"><strong id="currentUserName">Loading user…</strong><span id="roleLabel">Loading permissions…</span><small class="version-badge">Version 81</small></div>
+          <span class="dots" aria-hidden="true">•••</span>
+        </button>
+      </aside>
+
+      <main>
+        <header class="topbar">
+          <button id="mobileMenuButton" class="mobile-menu-button" type="button" aria-label="Open navigation">☰</button>
+          <div class="mobile-brand">MAILO <span>Task Manager</span></div>
+          <div class="search-wrap"><span>⌕</span><input id="searchInput" placeholder="Search tasks…" /></div>
+          <div class="top-actions">
+            <button class="data-transfer-btn main-admin-only" type="button" onclick="exportApplicationData()">Export Data</button>
+            <button class="data-transfer-btn main-admin-only" type="button" onclick="document.getElementById('applicationDataImport').click()">Import Data</button>
+            <input id="applicationDataImport" class="hidden" type="file" accept="application/json,.json" onchange="importApplicationData(this)">
+            <label class="user-preview-switcher main-admin-only" hidden>View as User
+              <select id="userPreviewSelect"></select>
+            </label>
+          </div>
+        </header>
+
+        <section class="content">
+          <div id="tasksContent">
+          <div class="page-head">
+            <div><h1>Tasks <span id="allCount" class="active-task-count">0</span></h1></div>
+            <button id="mobileNewTaskBtn" class="primary-btn mobile-new-task"><span>+</span> New task</button>
+          </div>
+
+          <div class="toolbar">
+            <div id="taskToolbarFilters" class="filters" aria-label="Task view options">
+              <button id="rollOverdueBtn" class="filter-btn admin-only" data-filter-key="rollOverdue" type="button" draggable="true">Roll Overdue to Monday</button>
+              <label class="filter-btn toggle-filter" data-filter-key="includeDone" draggable="true"><input id="includeDoneFilter" type="checkbox"> Include Done</label>
+              <label class="filter-btn toggle-filter" data-filter-key="unfoldSubtasks" draggable="true"><input id="unfoldSubtasksFilter" type="checkbox"> Unfold Subtasks</label>
+              <label class="filter-btn toggle-filter" data-filter-key="sortSubtasks" draggable="true"><input id="sortSubtasksFilter" type="checkbox"> Sort Subtasks Individually</label>
+              <label class="filter-btn toggle-filter" data-filter-key="viewMiniTasks" draggable="true"><input id="viewMiniTasksFilter" type="checkbox"> View Mini Tasks</label>
+              <label class="filter-btn toggle-filter" data-filter-key="viewCancelled" draggable="true"><input id="viewCancelledFilter" type="checkbox"> View Cancelled</label>
+              <label class="filter-btn toggle-filter" data-filter-key="viewDone" draggable="true"><input id="viewDoneFilter" type="checkbox"> View Done</label>
+              <label class="filter-btn toggle-filter" data-filter-key="myTasks" draggable="true"><input id="myTasksFilter" type="checkbox"> My Tasks</label>
+              <label class="filter-btn toggle-filter" data-filter-key="mentionedTasks" draggable="true"><input id="mentionedTasksFilter" type="checkbox"> Mentioned Tasks</label>
+            </div>
+          </div>
+
+          <div id="listView" class="list-view" aria-live="polite"></div>
+          <div id="calendarView" class="hidden" aria-hidden="true"></div>
+          <div id="progressLogView" class="hidden" aria-hidden="true"></div>
+          <div class="hidden" aria-hidden="true">
+            <span id="projectCrumb">ALL SPACES</span>
+            <button id="listTab" type="button"></button>
+            <button id="calendarTab" type="button"></button>
+            <button id="progressLogTab" type="button"></button>
+            <select id="assigneeFilter"><option value="all">All assignees</option></select>
+            <button id="voiceTaskBtn" type="button"></button>
+            <button id="siriTaskSetupBtn" type="button"></button>
+          </div>
+          </div>
+          <div id="chatView" class="chat-view hidden" aria-live="polite"></div>
+          <div id="usersView" class="users-view hidden" aria-live="polite"></div>
+          <div id="spacesView" class="users-view hidden" aria-live="polite"></div>
+          <div id="overviewView" class="overview-view hidden" aria-live="polite"></div>
+          <div id="activityView" class="activity-view hidden" aria-live="polite"></div>
+        </section>
+      </main>
+    </div>
+
+    <div id="modalBackdrop" class="modal-backdrop hidden">
+      <section class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+        <button id="closeModal" class="close-btn" aria-label="Close">×</button>
+        <div id="modalContent"></div>
+        <footer id="taskDetailsFooter" class="task-details-footer hidden"></footer>
+      </section>
+    </div>
+
+    <div id="toast" class="toast"></div>
+    <div id="authGate" class="auth-gate hidden" aria-live="polite">
+      <section class="auth-card" aria-labelledby="authTitle">
+        <div class="auth-brand"><span>S</span><div><strong>SHG</strong><small>Task Manager</small></div></div>
+        <h1 id="authTitle">Sign in</h1>
+        <p id="authMessage">Enter your company email and we will send you an 8-digit verification code.</p>
+        <form id="authEmailForm">
+          <label for="authEmail">Email</label>
+          <input id="authEmail" type="email" autocomplete="email" required placeholder="name@shd.global" />
+          <button id="sendOtpBtn" type="button" onclick="window.shgSubmitLoginEmail?.()">Send verification code</button>
+        </form>
+        <form id="authOtpForm" class="hidden">
+          <button id="changeAuthEmail" class="auth-back" type="button">← Change email</button>
+          <label for="authOtp">8-digit code</label>
+          <input id="authOtp" type="text" inputmode="numeric" autocomplete="one-time-code" minlength="8" maxlength="8" pattern="[0-9]{8}" required placeholder="00000000" />
+          <button id="verifyOtpBtn" type="submit">Verify and sign in</button>
+          <button id="resendOtpBtn" class="auth-secondary" type="button">Send a new code</button>
+        </form>
+        <p id="authError" class="auth-error hidden"></p>
+      </section>
+    </div>
+    <script src="auth.js?v=281"></script>
+    <script src="vendor/supabase.js?v=21107"></script>
+    <script src="remote-sync.js?v=281"></script>
+    <script>
+      (() => {
+        let applicationStartPromise = null;
+        window.shgStartApplication = () => {
+          if (window.SHG_APP_LOADED) return Promise.resolve(true);
+          if (applicationStartPromise) return applicationStartPromise;
+          window.SHG_WAITING_FOR_LOGIN = false;
+          applicationStartPromise = (async () => {
+        const STARTUP_TIMEOUT_MS = 30000;
+        const loadScript = source => new Promise((resolve, reject) => {
+          const script = document.createElement('script');
+          script.src = source;
+          script.onload = resolve;
+          script.onerror = reject;
+          document.body.appendChild(script);
+        });
+        const withStartupTimeout = (promise, message) => {
+          let timer;
+          const timeout = new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error(message)), STARTUP_TIMEOUT_MS);
+          });
+          return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+        };
+        const showLogin = () => {
+          document.querySelector('.app-shell')?.classList.add('hidden');
+          if (typeof window.shgShowLogin === 'function') {
+            // A transient startup/auth read must never erase a successfully
+            // verified session. Only the explicit Logout action clears it.
+            window.shgShowLogin({ resetSession: false });
+          } else {
+            document.getElementById('authGate')?.classList.remove('hidden');
+            document.body.classList.add('auth-locked');
+          }
+        };
+        const showConnectionError = error => {
+          console.error('Could not load current shared SHG data', error);
+          document.querySelector('.app-shell')?.classList.add('hidden');
+          const gate = document.getElementById('authGate');
+          const card = gate?.querySelector('.auth-card');
+          const reason = String(error?.message || '').trim();
+          if (card) card.innerHTML = `<div class="auth-brand"><span>S</span><div><strong>Mailo</strong><small>Shared workspace</small></div></div><h1>Connection unavailable</h1><p>Mailo could not load the current shared database. No cached task data will be shown.</p>${reason ? `<p class="auth-error">${reason.replace(/[&<>"']/g, character => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[character]))}</p>` : ''}<button type="button" onclick="location.reload()">Try again</button>`;
+          gate?.classList.remove('hidden');
+          document.body.classList.add('auth-locked');
+        };
+        const dataScripts = [
+          'jira-tasks.js',
+          'victor-main-filter.js',
+          ...Array.from({ length: 16 }, (_, index) => `jira-comments-${String(index + 1).padStart(2, '0')}.js`),
+        ];
+        const loadStaticData = () => Promise.all(dataScripts.map(loadScript));
+        let staticDataReady = Promise.resolve();
+        const remoteDataReady = (async () => {
+          if (typeof window.SHG_AUTH_REQUIRED !== 'boolean' || typeof window.shgEnsureFreshSession !== 'function') {
+            throw new Error('The login service did not start correctly. Please reload the page.');
+          }
+          if (!window.SHG_AUTH_REQUIRED) {
+            staticDataReady = loadStaticData();
+            try {
+              await window.shgEnsureFreshSession();
+              await window.shgPrepareRemoteData?.();
+            } catch (error) {
+              console.error('Could not load shared SHG data', error);
+              window.SHG_REMOTE_LOAD_ERROR = error;
+            }
+            return;
+          }
+          const activeSession = await window.shgEnsureFreshSession().catch(() => null);
+          if (!activeSession) {
+            window.SHG_WAITING_FOR_LOGIN = true;
+            showLogin();
+            return;
+          }
+          if (typeof window.shgPrepareRemoteData !== 'function') {
+            throw new Error('The shared database service did not start correctly. Please reload the page.');
+          }
+          let lastError = null;
+          for (let attempt = 0; attempt < 2; attempt += 1) {
+            try {
+              await window.shgEnsureFreshSession();
+              const result = await withStartupTimeout(
+                window.shgPrepareRemoteData(),
+                'The shared database took too long to respond. Please try again.',
+              );
+              if (result?.remote) return;
+              throw new Error('The shared database did not return current data.');
+            } catch (error) {
+              lastError = error;
+              if (attempt < 1) await new Promise(resolve => setTimeout(resolve, 500));
+            }
+          }
+          throw lastError || new Error('The shared database is temporarily unavailable.');
+        })();
+        try {
+          await Promise.all([staticDataReady, remoteDataReady]);
+        } catch (error) {
+          showConnectionError(error);
+          return;
+        }
+        if (window.SHG_WAITING_FOR_LOGIN) return false;
+        try {
+          await loadScript('app.js?v=277');
+          await loadScript('version-51.js?v=51');
+          await loadScript('version-52.js?v=277');
+          await loadScript('version-53.js?v=53');
+          await loadScript('version-54.js?v=54');
+          await loadScript('version-55.js?v=55');
+          await loadScript('version-56.js?v=56');
+          await loadScript('version-57.js?v=57');
+          await loadScript('version-58.js?v=58');
+          await loadScript('version-59.js?v=59');
+          await loadScript('version-60.js?v=61');
+          await loadScript('version-62.js?v=62');
+          await loadScript('version-63.js?v=63');
+          await loadScript('version-64.js?v=274');
+          await loadScript('version-75.js?v=275');
+          await loadScript('version-76-list.js?v=276');
+          await loadScript('version-76-core.js?v=276');
+          await loadScript('version-76-admin.js?v=276');
+          await loadScript('version-76-chat.js?v=276');
+          await loadScript('version-77.js?v=2781');
+          await loadScript('version-78.js?v=2781');
+          await loadScript('version-79.js?v=279');
+          await loadScript('version-80.js?v=280');
+          await loadScript('version-81.js?v=281');
+          // app.js performs its initial paint before the version wrappers are
+          // installed. Run one definitive paint now that the complete Version
+          // 81 behavior and access policy are active.
+          window.render?.();
+          const linkedTaskId = String(window.SHG_PENDING_LINKED_TASK_ID || '').trim();
+          if (linkedTaskId) {
+            const linkedTask = typeof state !== 'undefined'
+              ? state.tasks.find(task => task.id === linkedTaskId)
+              : null;
+            window.SHG_PENDING_LINKED_TASK_ID = '';
+            if (linkedTask && !isTaskDeleted(linkedTask) && typeof canCurrentUserAccessTask === 'function' && canCurrentUserAccessTask(linkedTask)) {
+              openTask(linkedTask.id);
+            } else {
+              window.closeModal?.(true);
+              window.toast?.('This Task does not exist or you do not have access to it');
+            }
+          }
+          window.SHG_APP_LOADED = true;
+        } catch (error) {
+          showConnectionError(error);
+          return false;
+        }
+        document.querySelector('.app-shell')?.classList.remove('hidden');
+        document.getElementById('authGate')?.classList.add('hidden');
+        document.body.classList.remove('auth-locked');
+        window.dispatchEvent(new CustomEvent('shg:app-ready'));
+        if (window.SHG_REMOTE_LOAD_ERROR && typeof window.toast === 'function') {
+          window.toast(`The shared database is temporarily unavailable. Retrying automatically. ${window.SHG_REMOTE_LOAD_ERROR.message || ''}`.trim());
+        }
+        window.addEventListener('shg:remote-error', event => {
+          if (typeof window.toast === 'function') {
+            window.toast(event.detail?.message || 'The shared database could not save the latest change.');
+          }
+        });
+        return true;
+          })().finally(() => { applicationStartPromise = null; });
+          return applicationStartPromise;
+        };
+        window.shgStartApplication().catch(error => console.error('MAILO startup failed', error));
+      })();
+    </script>
+    <script>
+      (() => {
+        const userButton = document.getElementById('sidebarUserButton');
+        const userMenu = document.getElementById('sidebarUserMenu');
+        const logoutButton = document.getElementById('logoutBtn');
+        if (!userButton || !userMenu || !logoutButton) return;
+
+        userButton.addEventListener('click', event => {
+          event.stopPropagation();
+          const opening = userMenu.classList.contains('hidden');
+          userMenu.classList.toggle('hidden', !opening);
+          userButton.setAttribute('aria-expanded', String(opening));
+        });
+
+        logoutButton.addEventListener('click', event => {
+          event.stopPropagation();
+          window.shgLogout?.();
+        });
+
+        document.addEventListener('click', event => {
+          if (!userMenu.contains(event.target) && !userButton.contains(event.target)) {
+            userMenu.classList.add('hidden');
+            userButton.setAttribute('aria-expanded', 'false');
+          }
+        });
+      })();
+    </script>
+  </body>
+</html>

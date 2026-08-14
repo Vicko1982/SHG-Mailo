@@ -1,6 +1,5 @@
 // Edge function: admin-set-user-role
-// Admin and main_admin may switch users between admin and user.
-// The single main_admin account is permanent and cannot be reassigned.
+// Only the authenticated permanent owner, Victor Stavropoulos, may change roles.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
 const corsHeaders = {
@@ -50,14 +49,9 @@ Deno.serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-    const { data: roles } = await admin
-      .from("user_roles")
-      .select("role")
-      .eq("user_id", u.user.id);
-    const canManageRoles = !!roles?.some(
-      (r) => r.role === "main_admin" || r.role === "admin",
-    );
-    if (!canManageRoles) {
+    const { data: canManageRoles, error: victorError } = await admin
+      .rpc("is_victor_stavropoulos", { _user_id: u.user.id });
+    if (victorError || canManageRoles !== true) {
       return new Response(
         JSON.stringify({ error: "Forbidden: administrator role required" }),
         { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
@@ -65,7 +59,7 @@ Deno.serve(async (req) => {
     }
 
     const body = (await req.json()) as Payload;
-    if (!body.user_id || !["admin", "user"].includes(body.role)) {
+    if (!body.user_id || !["main_admin", "admin", "user"].includes(body.role)) {
       return new Response(JSON.stringify({ error: "Invalid payload" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -79,15 +73,20 @@ Deno.serve(async (req) => {
       );
     }
 
-    const { data: targetRoles } = await admin
-      .from("user_roles")
-      .select("role")
-      .eq("user_id", body.user_id);
-    if (targetRoles?.some((r) => r.role === "main_admin")) {
-      return new Response(
-        JSON.stringify({ error: "The Main Admin role is permanent and cannot be changed" }),
-        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+    const { data: targetIsVictor, error: targetVictorError } = await admin
+      .rpc("is_victor_stavropoulos", { _user_id: body.user_id });
+    if (targetVictorError) throw targetVictorError;
+    if (targetIsVictor === true) {
+      if (body.role !== "main_admin") {
+        return new Response(
+          JSON.stringify({ error: "Victor Stavropoulos must always remain a Main Admin" }),
+          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
     await admin.from("user_roles").delete().eq("user_id", body.user_id);

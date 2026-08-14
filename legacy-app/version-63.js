@@ -1,0 +1,50 @@
+/* MAILO Version 63 */
+(() => {
+  const VICTOR='Victor Stavropoulos';
+  const role=name=>name===VICTOR?'main_admin':(window.SHG_REMOTE_BOOTSTRAP?.roleByName?.[name]||(state.admins.has(name)?'admin':'user'));
+  const isVictor=()=>CURRENT_USER===VICTOR&&String(window.SHG_AUTH_USER_NAME||SESSION_USER||'')===VICTOR;
+  const canArchive=()=>isVictor()||role(CURRENT_USER)==='main_admin';
+  const voiceAllowed=()=>['admin','main_admin'].includes(role(CURRENT_USER));
+  document.querySelectorAll('#versionBadge,.version-badge').forEach(node=>node.textContent='Version 63');
+
+  // Retire the stale Space called Mini Task without touching Mini Task issue types.
+  for(const [key,project] of Object.entries(PROJECTS))if(String(project?.name||'').trim().toLowerCase()==='mini task'){delete PROJECTS[key];delete state.spaceAccess[key];if(state.spaceFolders?.assignments)delete state.spaceFolders.assignments[key]}
+  try{const spaces=JSON.parse(localStorage.getItem('shg-shared-space-definitions')||'{}');for(const [key,project] of Object.entries(spaces))if(String(project?.name||'').trim().toLowerCase()==='mini task')delete spaces[key];safeLocalSet('shg-shared-space-definitions',JSON.stringify(spaces))}catch{}
+
+  // Archive: hidden by default and available only to Victor/Main Admins.
+  if(!STATUSES.some(item=>item.id==='archive'))STATUSES.push({id:'archive',label:'Archive',color:'#64748b'});
+  FLOW.archive=['backlog'];for(const id of Object.keys(FLOW))if(id!=='archive'&&!FLOW[id].includes('archive'))FLOW[id].push('archive');
+  state.viewArchived=false;
+  const oldCanAppear=canAppearInMainFilter;canAppearInMainFilter=task=>oldCanAppear(task)&&(task.status!=='archive'||state.viewArchived);
+  const oldTargets=availableStatusTargets;availableStatusTargets=task=>oldTargets(task).filter(target=>target!=='archive'||canArchive());
+  const oldMove=moveTask;moveTask=function(id,target,reason=null){if(target==='archive'&&!canArchive()){toast('Only Victor or a Main Admin can archive Tasks');return}const task=state.tasks.find(item=>item.id===id);oldMove(id,target,reason);if(task?.status==='archive'){task.disableMainAdminReminders=true;task.archivedAt=new Date().toISOString();task.archivedBy=CURRENT_USER;save()}};
+  function archiveToggle(){const host=document.querySelector('#taskToolbarFilters,.task-toolbar,.task-filter-row,.filter-row,.list-heading-actions');if(!host||document.getElementById('viewArchived63'))return;const label=document.createElement('label');label.className='filter-chip archive-filter63';label.innerHTML='<input id="viewArchived63" type="checkbox"> View Archived';label.querySelector('input').checked=state.viewArchived;label.querySelector('input').onchange=e=>{state.viewArchived=e.target.checked;render()};host.append(label)}
+
+  // Voice Memo tools for Administrators and Main Admins.
+  chooseVoiceMemos=function(){if(!voiceAllowed()){toast('Voice Memo tools are available to Administrators');return}document.getElementById('voiceMemoFiles')?.click()};
+  function voiceVisibility(){document.querySelectorAll('.sidebar-voice-memos').forEach(node=>{node.classList.remove('main-admin-only');node.hidden=!voiceAllowed()})}
+
+  // Label search, rename and deletion.
+  const labels=()=>[...new Set(state.tasks.flatMap(task=>task.labels||[]))].sort((a,b)=>a.localeCompare(b,'el',{sensitivity:'base'}));
+  window.filterLabels63=input=>{const q=input.value.trim().toLocaleLowerCase('el');input.closest('.label-manager63')?.querySelectorAll('[data-label]').forEach(row=>row.hidden=!!q&&!row.dataset.label.toLocaleLowerCase('el').includes(q))};
+  window.renameLabel63=oldName=>{const next=prompt(`Rename label “${oldName}”`,oldName)?.trim();if(!next||next===oldName)return;for(const task of state.tasks)task.labels=[...new Set((task.labels||[]).map(label=>label===oldName?next:label))];save();if(taskDetailsDraft?.id)openTask(taskDetailsDraft.id,true);else render();toast(`Label renamed to ${next}`)};
+  window.deleteLabel63=name=>{if(!confirm(`Delete label “${name}” from every Task?`))return;for(const task of state.tasks)task.labels=(task.labels||[]).filter(label=>label!==name);save();if(taskDetailsDraft?.id)openTask(taskDetailsDraft.id,true);else render();toast(`Label “${name}” deleted`)};
+  const oldLabels=taskDetailLabelsControl;taskDetailLabelsControl=function(task){if(!canEditTaskLabels(task))return oldLabels(task);const selected=taskDetailsDraft?.labels||task.labels||[],values=labels();return `<details class="detail-labels-control label-manager63"><summary>${selected.length?selected.map(esc).join(', '):'No labels'} <span>▾</span></summary><div><input class="label-search63" placeholder="Search labels…" oninput="filterLabels63(this)">${values.map((label,index)=>`<label data-label="${esc(label)}"><input type="checkbox" ${selected.includes(label)?'checked':''} onchange="toggleTaskDetailLabel('${task.id}',${index},this.checked)"><span>${esc(label)}</span><button type="button" onclick="event.preventDefault();renameLabel63(${esc(JSON.stringify(label))})">Edit</button><button type="button" class="danger" onclick="event.preventDefault();deleteLabel63(${esc(JSON.stringify(label))})">×</button></label>`).join('')}<form onsubmit="createTaskDetailLabel('${task.id}',event)"><input name="label" maxlength="60" placeholder="Create new label…"><button type="submit">Add</button></form></div></details>`};
+
+  // Task Chat mention menu, rebuilt after every render and sorted alphabetically.
+  function mentions(){const form=document.querySelector('.task-chat-composer'),area=form?.querySelector('textarea[name="message"]');if(!form||!area)return;let menu=form.querySelector('.task-chat-mention-menu63');if(!menu){menu=document.createElement('div');menu.className='comment-mention-menu task-chat-mention-menu63';form.append(menu)}const update=()=>{const before=area.value.slice(0,area.selectionStart),at=before.lastIndexOf('@');if(at<0||/\s/.test(before.slice(at+1,-1))){menu.innerHTML='';return}const q=before.slice(at+1).toLocaleLowerCase('el'),people=sortedPeople().filter(p=>!q||p.name.toLocaleLowerCase('el').includes(q));menu.innerHTML=people.map(p=>`<button type="button" data-name="${esc(p.name)}"><i>${esc(p.initials)}</i><span>${esc(p.name)}</span></button>`).join('');menu.querySelectorAll('button').forEach(button=>button.onmousedown=e=>{e.preventDefault();area.setRangeText(`@${button.dataset.name} `,at,area.selectionStart,'end');menu.innerHTML='';area.focus()})};area.oninput=update;area.onkeyup=update;area.onclick=update}
+
+  // In-app mobile preview for images/files rather than a failing popup.
+  function preview(url,name='Attachment'){let modal=document.getElementById('attachmentPreview63');if(!modal){modal=document.createElement('div');modal.id='attachmentPreview63';modal.className='attachment-preview63';document.body.append(modal)}const image=/^(data:image\/|blob:)/i.test(url)||/\.(png|jpe?g|gif|webp|heic)(\?|$)/i.test(url);modal.innerHTML=`<button type="button">×</button><div>${image?`<img src="${url}" alt="${esc(name)}">`:`<p>${esc(name)}</p><a href="${url}" download="${esc(name)}">Download file</a>`}</div>`;modal.hidden=false;modal.querySelector('button').onclick=()=>modal.hidden=true;modal.onclick=e=>{if(e.target===modal)modal.hidden=true}}
+  function fileLinks(){document.querySelectorAll('.task-chat-image,.task-chat-file,.comment-images a').forEach(link=>{if(link.dataset.preview63)return;link.dataset.preview63='1';link.removeAttribute('target');link.onclick=e=>{e.preventDefault();preview(link.href,link.download||link.textContent.trim()||'Attachment')}})}
+
+  // Victor-only transcription through the secured OpenAI server function.
+  let recorder,stream,chunks=[],target;
+  window.toggleTranscription63=async where=>{if(!isVictor())return;if(recorder?.state==='recording'){recorder.stop();return}target=where;try{stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}});const type=['audio/mp4','audio/webm;codecs=opus','audio/webm'].find(v=>MediaRecorder.isTypeSupported(v))||'';recorder=new MediaRecorder(stream,type?{mimeType:type}:undefined);chunks=[];recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};recorder.onstop=async()=>{stream?.getTracks().forEach(track=>track.stop());const blob=new Blob(chunks,{type:recorder.mimeType||'audio/webm'}),form=new FormData();form.set('file',blob,`comment-${Date.now()}.webm`);toast('Transcribing with OpenAI…');try{const result=await window.shgInvokeFunctionFormData('import-voice-memo',form),area=target==='chat'?document.querySelector('.task-chat-composer textarea'):document.querySelector(`#commentInput-${CSS.escape(String(target))}`),text=result.transcript||'';if(area){area.value+=`${area.value?' ':''}${text}`;area.dispatchEvent(new Event('input',{bubbles:true}));area.focus()}toast('Transcription is ready for review')}catch(error){toast(error.message||'Transcription failed')}recorder=null};recorder.start();toast('Listening… Tap again to stop.')}catch{toast('Microphone access is required')}};
+  function transcribeButtons(){if(!isVictor())return;const row=document.querySelector('.task-chat-compose-row');if(row&&!row.querySelector('.transcribe63'))row.querySelector('textarea')?.insertAdjacentHTML('beforebegin','<button type="button" class="transcribe63" onclick="toggleTranscription63(\'chat\')" title="Transcribe with OpenAI">✦🎤</button>');document.querySelectorAll('#modalContent .comment-tools').forEach(tools=>{if(!tools.querySelector('.transcribe63'))tools.insertAdjacentHTML('afterbegin',`<button type="button" class="transcribe63" onclick="toggleTranscription63('${taskDetailsDraft?.id||''}')">✦🎤 Transcribe</button>`)})}
+
+  const oldChat=window.renderTaskChat;window.renderTaskChat=function(){oldChat?.();mentions();fileLinks();transcribeButtons()};
+  const oldOpen=openTask;openTask=function(id,preserve=false){oldOpen(id,preserve);fileLinks();transcribeButtons()};
+  const oldRender=render;render=function(){oldRender();archiveToggle();voiceVisibility()};
+  voiceVisibility();render();
+})();
