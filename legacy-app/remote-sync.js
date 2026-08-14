@@ -22,6 +22,7 @@
     spaceIdsByKey: new Map(),
     taskCreatedByIds: new Map(),
     taskCreatorNames: new Map(),
+    taskUpdatedAts: new Map(),
     activityIds: new Set(),
     ready: false,
     syncing: false,
@@ -105,7 +106,7 @@
       apikey: window.SHG_SUPABASE_KEY,
       Authorization: `Bearer ${accessToken}`,
       'Content-Type': 'application/json',
-      'X-Mailo-Version': '77',
+      'X-Mailo-Version': '78',
       ...extra,
     };
   }
@@ -124,7 +125,11 @@
       const text = await response.text();
       const body = text ? JSON.parse(text) : null;
       if (!response.ok) {
-        const error = new Error(body?.message || body?.error_description || body?.hint || `Database request failed (${response.status})`);
+        const rawMessage = body?.message || body?.error_description || body?.hint || `Database request failed (${response.status})`;
+        const readableMessage = body?.code === '42501' && path.includes('/tasks')
+          ? 'This Task could not be saved because your current account does not have permission for the requested change. Refresh the page and try again.'
+          : rawMessage;
+        const error = new Error(readableMessage);
         error.status = response.status;
         error.code = body?.code || '';
         throw error;
@@ -524,6 +529,7 @@
     cache.taskHashes.clear();
     cache.taskCreatedByIds.clear();
     cache.taskCreatorNames.clear();
+    cache.taskUpdatedAts.clear();
     for (const [index, task] of allRemoteTasks.entries()) {
       if (!task._supabaseId) continue;
       const row = tasks[index];
@@ -531,6 +537,7 @@
       cache.taskHashes.set(task._supabaseId, taskHash(task));
       cache.taskCreatedByIds.set(task._supabaseId, row?.created_by_id || null);
       cache.taskCreatorNames.set(task._supabaseId, task.creator || '');
+      cache.taskUpdatedAts.set(task._supabaseId, row?.updated_at || task.updated || null);
     }
 
     const sharedDefinitions = Object.fromEntries(
@@ -903,16 +910,22 @@
     if (!payload.space_id) throw new Error(`Unknown Space for task ${task.id}`);
     let id = task._supabaseId;
     if (id) {
-      const updated = await request(`/rest/v1/tasks?id=eq.${id}&select=id,task_key,created_by_id,audit,legacy_data`, {
+      const knownUpdatedAt = cache.taskUpdatedAts.get(id);
+      const concurrencyFilter = knownUpdatedAt ? `&updated_at=eq.${encodeURIComponent(knownUpdatedAt)}` : '';
+      const updated = await request(`/rest/v1/tasks?id=eq.${id}${concurrencyFilter}&select=id,task_key,created_by_id,audit,legacy_data,updated_at`, {
         method: 'PATCH',
         headers: { Prefer: 'return=representation' },
         body: JSON.stringify(payload),
       });
       const row = updated?.[0];
+      if (!row) {
+        throw new Error(`Task ${task.id} changed in another browser. Refresh before saving so newer assignments are not overwritten.`);
+      }
       id = row?.id || id;
       if (Array.isArray(row?.audit)) task.audit = row.audit;
       if (row?.legacy_data?.creator) task.creator = row.legacy_data.creator;
       if (row?.created_by_id) payload.created_by_id = row.created_by_id;
+      cache.taskUpdatedAts.set(id, row.updated_at || task.updated || null);
     } else {
       let inserted = null;
       let candidateKey = payload.task_key;
@@ -920,7 +933,7 @@
         payload.task_key = candidateKey;
         if (payload.legacy_data) payload.legacy_data.id = candidateKey;
         try {
-          inserted = await request('/rest/v1/tasks?select=id,task_key,created_by_id,audit,legacy_data', {
+          inserted = await request('/rest/v1/tasks?select=id,task_key,created_by_id,audit,legacy_data,updated_at', {
             method: 'POST',
             headers: { Prefer: 'return=representation' },
             body: JSON.stringify(payload),
@@ -938,6 +951,7 @@
       if (Array.isArray(inserted[0].audit)) task.audit = inserted[0].audit;
       if (inserted[0].legacy_data?.creator) task.creator = inserted[0].legacy_data.creator;
       if (inserted[0].created_by_id) payload.created_by_id = inserted[0].created_by_id;
+      cache.taskUpdatedAts.set(id, inserted[0].updated_at || task.updated || null);
     }
     cache.tasks.set(id, task);
     await syncComments(task);
@@ -965,6 +979,7 @@
           cache.taskHashes.delete(id);
           cache.taskCreatedByIds.delete(id);
           cache.taskCreatorNames.delete(id);
+          cache.taskUpdatedAts.delete(id);
         }
       }
 
@@ -976,11 +991,17 @@
       const idByKey = new Map(tasks.map(task => [task.id, task._supabaseId]).filter(([, id]) => id));
       for (const task of changed) {
         const desiredParentId = task.parent ? idByKey.get(task.parent) || null : null;
-        await request(`/rest/v1/tasks?id=eq.${task._supabaseId}`, {
+        const knownUpdatedAt = cache.taskUpdatedAts.get(task._supabaseId);
+        const concurrencyFilter = knownUpdatedAt ? `&updated_at=eq.${encodeURIComponent(knownUpdatedAt)}` : '';
+        const parentRows = await request(`/rest/v1/tasks?id=eq.${task._supabaseId}${concurrencyFilter}&select=updated_at`, {
           method: 'PATCH',
-          headers: { Prefer: 'return=minimal' },
+          headers: { Prefer: 'return=representation' },
           body: JSON.stringify({ parent_id: desiredParentId }),
         });
+        if (!parentRows?.[0]) {
+          throw new Error(`Task ${task.id} changed in another browser. Refresh before changing its hierarchy.`);
+        }
+        cache.taskUpdatedAts.set(task._supabaseId, parentRows[0].updated_at || knownUpdatedAt || null);
       }
 
       for (const entry of activity) {

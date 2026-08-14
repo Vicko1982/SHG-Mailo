@@ -21,6 +21,7 @@
     <link rel="stylesheet" href="version-76-core.css?v=276" />
     <link rel="stylesheet" href="version-76-chat.css?v=276" />
     <link rel="stylesheet" href="version-77.css?v=277" />
+    <link rel="stylesheet" href="version-78.css?v=278" />
   </head>
   <body>
     <div class="app-shell">
@@ -56,7 +57,7 @@
         </div>
         <button id="sidebarUserButton" class="sidebar-footer" type="button" aria-haspopup="menu" aria-expanded="false">
           <div id="currentUserAvatar" class="avatar">…</div>
-          <div class="user-meta"><strong id="currentUserName">Loading user…</strong><span id="roleLabel">Loading permissions…</span><small class="version-badge">Version 77</small></div>
+          <div class="user-meta"><strong id="currentUserName">Loading user…</strong><span id="roleLabel">Loading permissions…</span><small class="version-badge">Version 78</small></div>
           <span class="dots" aria-hidden="true">•••</span>
         </button>
       </aside>
@@ -271,9 +272,10 @@
           await loadScript('version-76-admin.js?v=276');
           await loadScript('version-76-chat.js?v=276');
           await loadScript('version-77.js?v=277');
+          await loadScript('version-78.js?v=278');
           // app.js performs its initial paint before the version wrappers are
           // installed. Run one definitive paint now that the complete Version
-          // 77 behavior and access policy are active.
+          // 78 behavior and access policy are active.
           window.render?.();
           const linkedTaskId = String(window.SHG_PENDING_LINKED_TASK_ID || '').trim();
           if (linkedTaskId) {
