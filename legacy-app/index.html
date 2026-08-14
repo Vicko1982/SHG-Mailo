@@ -57,7 +57,7 @@
         </div>
         <button id="sidebarUserButton" class="sidebar-footer" type="button" aria-haspopup="menu" aria-expanded="false">
           <div id="currentUserAvatar" class="avatar">…</div>
-          <div class="user-meta"><strong id="currentUserName">Loading user…</strong><span id="roleLabel">Loading permissions…</span><small class="version-badge">Version 80</small></div>
+          <div class="user-meta"><strong id="currentUserName">Loading user…</strong><span id="roleLabel">Loading permissions…</span><small class="version-badge">Version 81</small></div>
           <span class="dots" aria-hidden="true">•••</span>
         </button>
       </aside>
@@ -149,9 +149,9 @@
         <p id="authError" class="auth-error hidden"></p>
       </section>
     </div>
-    <script src="auth.js?v=277"></script>
+    <script src="auth.js?v=281"></script>
     <script src="vendor/supabase.js?v=21107"></script>
-    <script src="remote-sync.js?v=277"></script>
+    <script src="remote-sync.js?v=281"></script>
     <script>
       (() => {
         let applicationStartPromise = null;
@@ -275,9 +275,10 @@
           await loadScript('version-78.js?v=2781');
           await loadScript('version-79.js?v=279');
           await loadScript('version-80.js?v=280');
+          await loadScript('version-81.js?v=281');
           // app.js performs its initial paint before the version wrappers are
           // installed. Run one definitive paint now that the complete Version
-          // 80 behavior and access policy are active.
+          // 81 behavior and access policy are active.
           window.render?.();
           const linkedTaskId = String(window.SHG_PENDING_LINKED_TASK_ID || '').trim();
           if (linkedTaskId) {

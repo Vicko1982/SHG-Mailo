@@ -9,6 +9,7 @@
   const DELETED_TASKS_KEY = 'shg-deleted-task-ids';
   const REMOTE_TIMEOUT = 20000;
   const COMMENT_FALLBACK_INTERVAL = 15000;
+  const TASK_COLUMNS = 'id,task_key,title,space_id,status,jira_status,priority,assignee_id,supervisor_id,approver_id,description,issue_type,parent_id,created_at,updated_at,due_date,target_start_date,unblocking_date,disable_main_admin_reminders,last_human_activity_at,last_status_changed_at,labels,cancellation_reason,created_by_id,audit,is_mini_task,manual_order,legacy_data';
 
   const cache = {
     tasks: new Map(),
@@ -109,7 +110,7 @@
       apikey: window.SHG_SUPABASE_KEY,
       Authorization: `Bearer ${accessToken}`,
       'Content-Type': 'application/json',
-      'X-Mailo-Version': '80',
+      'X-Mailo-Version': '81',
       ...extra,
     };
   }
@@ -275,6 +276,52 @@
     delete task.lastChecks;
     delete task.chatReadBy;
     return task;
+  }
+
+  function taskParentKeyByRemoteId() {
+    return new Map(
+      [...cache.tasks.entries()]
+        .filter(([remoteId, task]) => Boolean(remoteId && task?.id))
+        .map(([remoteId, task]) => [remoteId, task.id]),
+    );
+  }
+
+  function canonicalTaskFromRow(row, comments = []) {
+    const parentKeyById = taskParentKeyByRemoteId();
+    if (row?.id && row?.task_key) parentKeyById.set(row.id, row.task_key);
+    return taskFromRow(row, parentKeyById, new Map([[row.id, comments]]));
+  }
+
+  function changedPublicTaskKeys(task, snapshot) {
+    const local = publicTask(task);
+    const previous = publicTask(snapshot || {});
+    const keys = new Set([...Object.keys(local), ...Object.keys(previous)]);
+    keys.delete('id');
+    return [...keys].filter(key => JSON.stringify(local[key]) !== JSON.stringify(previous[key]));
+  }
+
+  function mergeTaskOntoLatestRow(task, snapshot, row) {
+    const merged = canonicalTaskFromRow(row, task.comments || []);
+    const local = publicTask(task);
+    for (const key of changedPublicTaskKeys(task, snapshot)) {
+      if (Object.prototype.hasOwnProperty.call(local, key)) merged[key] = safeClone(local[key]);
+      else delete merged[key];
+    }
+    merged.comments = task.comments || [];
+    if (task.lastChecks) merged.lastChecks = safeClone(task.lastChecks);
+    if (task.chatReadBy) merged.chatReadBy = safeClone(task.chatReadBy);
+    return merged;
+  }
+
+  function applyCanonicalTaskRow(task, row, overrides = {}) {
+    const comments = task.comments || [];
+    const lastChecks = task.lastChecks ? safeClone(task.lastChecks) : null;
+    const chatReadBy = task.chatReadBy ? safeClone(task.chatReadBy) : null;
+    const canonical = canonicalTaskFromRow(row, comments);
+    for (const key of Object.keys(task)) delete task[key];
+    Object.assign(task, canonical, overrides, { comments });
+    if (lastChecks) task.lastChecks = lastChecks;
+    if (chatReadBy) task.chatReadBy = chatReadBy;
   }
 
   function commentFromRow(row) {
@@ -455,7 +502,7 @@
     const rolesRequest = fetchAll('user_roles', 'user_id,role');
     const spacesRequest = fetchAll('spaces', 'id,key,name,color,type,owner_id');
     const membersRequest = fetchAll('space_members', 'space_id,user_id');
-    const tasksRequest = fetchAll('tasks', 'id,task_key,title,space_id,status,jira_status,priority,assignee_id,supervisor_id,approver_id,description,issue_type,parent_id,created_at,updated_at,due_date,target_start_date,unblocking_date,disable_main_admin_reminders,last_human_activity_at,last_status_changed_at,labels,cancellation_reason,created_by_id,audit,is_mini_task,manual_order,legacy_data');
+    const tasksRequest = fetchAll('tasks', TASK_COLUMNS);
     Promise.all([profilesRequest, rolesRequest]).then(([earlyProfiles, earlyRoles]) => {
       const names = new Map(earlyProfiles.map(profile => [profile.id, profile.full_name || '']));
       const earlyRoleByName = Object.fromEntries(earlyRoles.map(row => [names.get(row.user_id), row.role]).filter(([name]) => Boolean(name)));
@@ -949,38 +996,61 @@
   }
 
   async function upsertTask(task) {
-    const isInsert = !task._supabaseId;
-    const payload = taskPayload(task, isInsert);
-    if (!payload.space_id) throw new Error(`Unknown Space for task ${task.id}`);
+    let payload = null;
     let id = task._supabaseId;
     if (id) {
-      const knownUpdatedAt = cache.taskUpdatedAts.get(id);
-      const concurrencyFilter = knownUpdatedAt ? `&updated_at=eq.${encodeURIComponent(knownUpdatedAt)}` : '';
-      const updated = await request(`/rest/v1/tasks?id=eq.${id}${concurrencyFilter}&select=id,task_key,created_by_id,audit,legacy_data,updated_at`, {
+      const latestRows = await request(`/rest/v1/tasks?id=eq.${id}&select=${encodeURIComponent(TASK_COLUMNS)}`);
+      const latestRow = latestRows?.[0];
+      if (!latestRow) {
+        const unavailable = new Error(`Task ${task.id} is no longer available to this account.`);
+        unavailable.code = 'TASK_UNAVAILABLE';
+        throw unavailable;
+      }
+
+      const snapshot = cache.taskSnapshots.get(id);
+      const mergedTask = mergeTaskOntoLatestRow(task, snapshot, latestRow);
+      const latestSnapshot = canonicalTaskFromRow(latestRow, task.comments || []);
+      if (task.lastChecks) latestSnapshot.lastChecks = safeClone(task.lastChecks);
+      if (task.chatReadBy) latestSnapshot.chatReadBy = safeClone(task.chatReadBy);
+      cache.taskSnapshots.set(id, safeClone(latestSnapshot));
+      cache.taskHashes.set(id, taskHash(latestSnapshot));
+      cache.taskCreatedByIds.set(id, latestRow.created_by_id || null);
+      cache.taskCreatorNames.set(id, profileName(latestRow.created_by_id) || mergedTask.creator || '');
+      cache.taskUpdatedAts.set(id, latestRow.updated_at || null);
+      payload = taskPayload(mergedTask, false);
+      if (!payload.space_id) throw new Error(`Unknown Space for task ${task.id}`);
+      const concurrencyFilter = latestRow.updated_at
+        ? `&updated_at=eq.${encodeURIComponent(latestRow.updated_at)}`
+        : '';
+      const updated = await request(`/rest/v1/tasks?id=eq.${id}${concurrencyFilter}&select=${encodeURIComponent(TASK_COLUMNS)}`, {
         method: 'PATCH',
         headers: { Prefer: 'return=representation' },
         body: JSON.stringify(payload),
       });
       const row = updated?.[0];
       if (!row) {
-        throw new Error(`Task ${task.id} changed in another browser. Refresh before saving so newer assignments are not overwritten.`);
+        const conflict = new Error(`Task ${task.id} received another change at the same moment. Its latest data was preserved; please try this change once more.`);
+        conflict.code = 'TASK_CONFLICT';
+        throw conflict;
       }
       id = row?.id || id;
-      if (Array.isArray(row?.audit)) task.audit = row.audit;
-      if (row?.legacy_data?.creator) task.creator = row.legacy_data.creator;
-      if (row?.created_by_id) payload.created_by_id = row.created_by_id;
+      applyCanonicalTaskRow(task, row, { parent: mergedTask.parent || null });
+      payload.created_by_id = row.created_by_id || payload.created_by_id;
       cache.taskUpdatedAts.set(id, row.updated_at || task.updated || null);
+      cache.taskParentIds.set(id, row.parent_id || null);
     } else {
+      payload = taskPayload(task, true);
+      if (!payload.space_id) throw new Error(`Unknown Space for task ${task.id}`);
       let inserted = null;
       let candidateKey = payload.task_key;
       for (let attempt = 0; attempt < 100; attempt += 1) {
         payload.task_key = candidateKey;
         if (payload.legacy_data) payload.legacy_data.id = candidateKey;
         try {
-          inserted = await request('/rest/v1/tasks?select=id,task_key,created_by_id,audit,legacy_data,updated_at', {
+          inserted = await request('/rest/v1/rpc/create_mailo_task_v81', {
             method: 'POST',
             headers: { Prefer: 'return=representation' },
-            body: JSON.stringify(payload),
+            body: JSON.stringify({ _payload: payload }),
           });
           break;
         } catch (error) {
@@ -990,12 +1060,13 @@
       }
       id = inserted?.[0]?.id;
       if (!id) throw new Error(`Task ${task.id} was not saved`);
+      const requestedParent = task.parent || null;
       task.id = inserted[0].task_key;
       task._supabaseId = id;
-      if (Array.isArray(inserted[0].audit)) task.audit = inserted[0].audit;
-      if (inserted[0].legacy_data?.creator) task.creator = inserted[0].legacy_data.creator;
+      applyCanonicalTaskRow(task, inserted[0], { parent: requestedParent });
       if (inserted[0].created_by_id) payload.created_by_id = inserted[0].created_by_id;
       cache.taskUpdatedAts.set(id, inserted[0].updated_at || task.updated || null);
+      cache.taskParentIds.set(id, inserted[0].parent_id || null);
     }
     // The Task row is already durable at this point. Record its server-backed
     // snapshot before syncing auxiliary comments so a later comment failure
@@ -1143,7 +1214,7 @@
       // RLS/permission failures are permanent for the current request. Retrying
       // them every 30 seconds cannot succeed without a permission or data
       // change and only repeats the same warning to an idle user.
-      if (error.code === '42501' || error.code === 'PARENT_CONFLICT' || error.status === 401 || error.status === 403) {
+      if (error.code === '42501' || error.code === 'PARENT_CONFLICT' || error.code === 'TASK_CONFLICT' || error.code === 'TASK_UNAVAILABLE' || error.status === 401 || error.status === 403) {
         rollbackRejectedTasks(tasks, changed);
         cache.queued = false;
         cache.queuedRequest = null;
