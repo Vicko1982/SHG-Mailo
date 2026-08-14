@@ -42,7 +42,7 @@
   if ('caches' in window) {
     caches.keys()
       .then(keys => Promise.all(keys
-        .filter(key => key.startsWith('shg-task-manager-') && key !== 'shg-task-manager-v279')
+        .filter(key => key.startsWith('shg-task-manager-') && key !== 'shg-task-manager-v280')
         .map(key => caches.delete(key))))
       .catch(() => {});
   }

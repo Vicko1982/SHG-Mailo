@@ -23,11 +23,13 @@
     spaceIdsByKey: new Map(),
     taskCreatedByIds: new Map(),
     taskCreatorNames: new Map(),
+    taskParentIds: new Map(),
     taskUpdatedAts: new Map(),
     activityIds: new Set(),
     ready: false,
     syncing: false,
     queued: false,
+    queuedRequest: null,
     timer: null,
     retryTimer: null,
     retryDelay: 3000,
@@ -107,7 +109,7 @@
       apikey: window.SHG_SUPABASE_KEY,
       Authorization: `Bearer ${accessToken}`,
       'Content-Type': 'application/json',
-      'X-Mailo-Version': '79',
+      'X-Mailo-Version': '80',
       ...extra,
     };
   }
@@ -327,8 +329,21 @@
       lastCommentSyncAt = latestTimestamp(lastCommentSyncAt, row.updated_at || row.created_at);
     }
     const detail = { type, taskId, comment, remoteId: row.id };
-    if (dispatch) window.dispatchEvent(new CustomEvent('shg:comment-change', { detail }));
+    if (dispatch) {
+      window.dispatchEvent(new CustomEvent('shg:comment-change', { detail }));
+      // The Task Chat listener merges the remote comment synchronously into the
+      // live Task. Rebase the Task hash afterwards so a later Create Task does
+      // not mistake a received comment for a local Task edit.
+      setTimeout(() => rebaseTaskAfterRemoteComment(row.task_id), 0);
+    }
     return detail;
+  }
+
+  function rebaseTaskAfterRemoteComment(remoteTaskId) {
+    const task = cache.tasks.get(remoteTaskId);
+    if (!task) return;
+    cache.taskHashes.set(remoteTaskId, taskHash(task));
+    cache.taskSnapshots.set(remoteTaskId, safeClone(task));
   }
 
   async function hydrateRemoteComments(tasks) {
@@ -550,6 +565,7 @@
     cache.taskHashes.clear();
     cache.taskCreatedByIds.clear();
     cache.taskCreatorNames.clear();
+    cache.taskParentIds.clear();
     cache.taskUpdatedAts.clear();
     for (const [index, task] of allRemoteTasks.entries()) {
       if (!task._supabaseId) continue;
@@ -559,6 +575,7 @@
       cache.taskHashes.set(task._supabaseId, taskHash(task));
       cache.taskCreatedByIds.set(task._supabaseId, row?.created_by_id || null);
       cache.taskCreatorNames.set(task._supabaseId, task.creator || '');
+      cache.taskParentIds.set(task._supabaseId, row?.parent_id || null);
       cache.taskUpdatedAts.set(task._supabaseId, row?.updated_at || task.updated || null);
     }
 
@@ -672,6 +689,11 @@
       }
       if (changes.length) {
         window.dispatchEvent(new CustomEvent('shg:comment-batch', { detail: { changes } }));
+        setTimeout(() => {
+          for (const remoteTaskId of new Set(entries.map(entry => entry.row.task_id))) {
+            rebaseTaskAfterRemoteComment(remoteTaskId);
+          }
+        }, 0);
       }
     } catch (error) {
       if (!realtimeConnected) console.warn('Task Chat fallback sync unavailable', error);
@@ -975,11 +997,16 @@
       if (inserted[0].created_by_id) payload.created_by_id = inserted[0].created_by_id;
       cache.taskUpdatedAts.set(id, inserted[0].updated_at || task.updated || null);
     }
+    // The Task row is already durable at this point. Record its server-backed
+    // snapshot before syncing auxiliary comments so a later comment failure
+    // can never make a successfully created Task disappear from the UI.
     cache.tasks.set(id, task);
-    await syncComments(task);
-    cache.taskHashes.set(id, taskHash(task));
     cache.taskCreatedByIds.set(id, payload.created_by_id || null);
     cache.taskCreatorNames.set(id, task.creator || '');
+    if (!cache.taskParentIds.has(id)) cache.taskParentIds.set(id, null);
+    cache.taskSnapshots.set(id, safeClone(task));
+    await syncComments(task);
+    cache.taskHashes.set(id, taskHash(task));
     cache.taskSnapshots.set(id, safeClone(task));
   }
 
@@ -1030,17 +1057,19 @@
     window.render?.();
   }
 
-  async function syncTasks(tasks, activity = []) {
+  async function syncTasks(tasks, activity = [], options = {}) {
     if (!cache.ready || cache.syncing) {
       cache.queued = true;
+      cache.queuedRequest = { tasks, activity, options };
       return;
     }
     cache.syncing = true;
     cache.queued = false;
     let changed = [];
     try {
+      const newTasksOnly = Boolean(options.newTasksOnly);
       const currentRemoteIds = new Set(tasks.map(task => task._supabaseId).filter(Boolean));
-      for (const [id] of cache.tasks) {
+      if (!newTasksOnly) for (const [id] of cache.tasks) {
         if (!currentRemoteIds.has(id)) {
           await request(`/rest/v1/tasks?id=eq.${id}`, {
             method: 'DELETE',
@@ -1051,18 +1080,23 @@
           cache.taskHashes.delete(id);
           cache.taskCreatedByIds.delete(id);
           cache.taskCreatorNames.delete(id);
+          cache.taskParentIds.delete(id);
           cache.taskUpdatedAts.delete(id);
         }
       }
 
-      changed = tasks.filter(task => (
-        !task._supabaseId || cache.taskHashes.get(task._supabaseId) !== taskHash(task)
-      ));
+      changed = newTasksOnly
+        ? tasks.filter(task => !task._supabaseId)
+        : tasks.filter(task => (
+          !task._supabaseId || cache.taskHashes.get(task._supabaseId) !== taskHash(task)
+        ));
       for (const task of changed) await upsertTask(task);
 
       const idByKey = new Map(tasks.map(task => [task.id, task._supabaseId]).filter(([, id]) => id));
       for (const task of changed) {
         const desiredParentId = task.parent ? idByKey.get(task.parent) || null : null;
+        const previousParentId = cache.taskParentIds.get(task._supabaseId) || null;
+        if (desiredParentId === previousParentId) continue;
         const knownUpdatedAt = cache.taskUpdatedAts.get(task._supabaseId);
         const concurrencyFilter = knownUpdatedAt ? `&updated_at=eq.${encodeURIComponent(knownUpdatedAt)}` : '';
         const parentRows = await request(`/rest/v1/tasks?id=eq.${task._supabaseId}${concurrencyFilter}&select=updated_at`, {
@@ -1071,8 +1105,11 @@
           body: JSON.stringify({ parent_id: desiredParentId }),
         });
         if (!parentRows?.[0]) {
-          throw new Error(`Task ${task.id} changed in another browser. Refresh before changing its hierarchy.`);
+          const conflict = new Error(`Task ${task.id} changed in another browser. Refresh before changing its hierarchy.`);
+          conflict.code = 'PARENT_CONFLICT';
+          throw conflict;
         }
+        cache.taskParentIds.set(task._supabaseId, desiredParentId);
         cache.taskUpdatedAts.set(task._supabaseId, parentRows[0].updated_at || knownUpdatedAt || null);
       }
 
@@ -1106,9 +1143,10 @@
       // RLS/permission failures are permanent for the current request. Retrying
       // them every 30 seconds cannot succeed without a permission or data
       // change and only repeats the same warning to an idle user.
-      if (error.code === '42501' || error.status === 401 || error.status === 403) {
+      if (error.code === '42501' || error.code === 'PARENT_CONFLICT' || error.status === 401 || error.status === 403) {
         rollbackRejectedTasks(tasks, changed);
         cache.queued = false;
+        cache.queuedRequest = null;
         if (cache.retryTimer) clearTimeout(cache.retryTimer);
         cache.retryTimer = null;
         cache.retryDelay = 3000;
@@ -1120,12 +1158,17 @@
         cache.retryDelay = Math.min(cache.retryDelay * 2, 30000);
         cache.retryTimer = setTimeout(() => {
           cache.retryTimer = null;
-          syncTasks(tasks, activity);
+          syncTasks(tasks, activity, options);
         }, retryIn);
       }
     } finally {
       cache.syncing = false;
-      if (cache.queued) setTimeout(() => syncTasks(tasks, activity), 50);
+      if (cache.queued) {
+        const queuedRequest = cache.queuedRequest || { tasks, activity, options };
+        cache.queued = false;
+        cache.queuedRequest = null;
+        setTimeout(() => syncTasks(queuedRequest.tasks, queuedRequest.activity, queuedRequest.options), 50);
+      }
     }
   }
 
@@ -1135,7 +1178,12 @@
       return;
     }
     clearTimeout(cache.timer);
-    cache.timer = setTimeout(() => syncTasks(tasks, activity), 250);
+    // Creation must be isolated from unrelated Tasks. Realtime comments and
+    // other read-side enrichments can change local objects without representing
+    // an intentional Task edit; batching them with a new Task caused RLS
+    // failures and removed the newly created Task from the screen.
+    const hasNewTasks = tasks.some(task => !task._supabaseId);
+    cache.timer = setTimeout(() => syncTasks(tasks, activity, { newTasksOnly: hasNewTasks }), 250);
   }
 
   async function saveUserSettings({ adminNames = [], approverName, spaceAccess = {} } = {}) {
