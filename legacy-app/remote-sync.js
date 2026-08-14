@@ -12,6 +12,7 @@
 
   const cache = {
     tasks: new Map(),
+    taskSnapshots: new Map(),
     taskHashes: new Map(),
     comments: new Map(),
     commentHashes: new Map(),
@@ -106,7 +107,7 @@
       apikey: window.SHG_SUPABASE_KEY,
       Authorization: `Bearer ${accessToken}`,
       'Content-Type': 'application/json',
-      'X-Mailo-Version': '78',
+      'X-Mailo-Version': '79',
       ...extra,
     };
   }
@@ -180,6 +181,8 @@
     // Stars are private user preferences. Never copy another user's star map
     // into the shared Task row or browser Task cache.
     delete clone.starredBy;
+    delete clone.lastChecks;
+    delete clone.chatReadBy;
     return clone;
   }
 
@@ -267,6 +270,8 @@
       _supabaseId: row.id,
     };
     delete task.starredBy;
+    delete task.lastChecks;
+    delete task.chatReadBy;
     return task;
   }
 
@@ -450,10 +455,14 @@
     const optional = await Promise.allSettled([
       fetchAll('app_settings', 'current_approver_id', 'id=eq.true'),
       fetchAll('user_preferences', 'user_id,preferences,updated_at', `user_id=eq.${encodeURIComponent(session()?.user?.id || '')}`),
+      fetchAll('task_last_checks', 'task_id,main_admin_id,checked_at', `main_admin_id=eq.${encodeURIComponent(session()?.user?.id || '')}`),
+      fetchAll('task_chat_reads', 'task_id,user_id,read_at', `user_id=eq.${encodeURIComponent(session()?.user?.id || '')}`),
     ]);
     const [profiles, roles, spaces, members, tasks] = core;
     const settings = optional[0].status === 'fulfilled' ? optional[0].value : [];
     const preferenceRows = optional[1].status === 'fulfilled' ? optional[1].value : [];
+    const lastCheckRows = optional[2].status === 'fulfilled' ? optional[2].value : [];
+    const chatReadRows = optional[3].status === 'fulfilled' ? optional[3].value : [];
     for (const result of optional) {
       if (result.status === 'rejected') console.warn('Optional shared data unavailable', result.reason);
     }
@@ -501,6 +510,17 @@
     const tombstonedRemoteTasks = allRemoteTasks.filter(task => deletedTaskKeys.has(task.id));
     const localTasks = allRemoteTasks.filter(task => !deletedTaskKeys.has(task.id));
     const currentProfileName = profileName(session()?.user?.id);
+    const localTaskByRemoteId = new Map(localTasks.map(task => [task._supabaseId, task]).filter(([id]) => Boolean(id)));
+    if (currentProfileName) {
+      for (const row of lastCheckRows) {
+        const task = localTaskByRemoteId.get(row.task_id);
+        if (task) task.lastChecks = { [currentProfileName]: row.checked_at };
+      }
+      for (const row of chatReadRows) {
+        const task = localTaskByRemoteId.get(row.task_id);
+        if (task) task.chatReadBy = { [currentProfileName]: row.read_at };
+      }
+    }
     if (currentProfileName) window.SHG_AUTH_USER_NAME = currentProfileName;
     window.SHG_USER_EMAILS = Object.fromEntries(profiles.filter(profile=>profile.full_name&&profile.email).map(profile=>[profile.full_name,profile.email]));
     const remoteTaskKeys = new Set(localTasks.map(task => task.id));
@@ -526,6 +546,7 @@
       localTasks.unshift(task);
     }
     cache.tasks.clear();
+    cache.taskSnapshots.clear();
     cache.taskHashes.clear();
     cache.taskCreatedByIds.clear();
     cache.taskCreatorNames.clear();
@@ -534,6 +555,7 @@
       if (!task._supabaseId) continue;
       const row = tasks[index];
       cache.tasks.set(task._supabaseId, task);
+      cache.taskSnapshots.set(task._supabaseId, safeClone(task));
       cache.taskHashes.set(task._supabaseId, taskHash(task));
       cache.taskCreatedByIds.set(task._supabaseId, row?.created_by_id || null);
       cache.taskCreatorNames.set(task._supabaseId, task.creator || '');
@@ -958,6 +980,54 @@
     cache.taskHashes.set(id, taskHash(task));
     cache.taskCreatedByIds.set(id, payload.created_by_id || null);
     cache.taskCreatorNames.set(id, task.creator || '');
+    cache.taskSnapshots.set(id, safeClone(task));
+  }
+
+  async function recordTaskLastCheck(task, checkedAt = new Date().toISOString()) {
+    if (!enabled() || !cache.ready || !task?._supabaseId || !session()?.user?.id) return false;
+    const name = profileName(session().user.id);
+    await request('/rest/v1/task_last_checks?on_conflict=task_id,main_admin_id', {
+      method: 'POST',
+      headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+      body: JSON.stringify({ task_id: task._supabaseId, main_admin_id: session().user.id, checked_at: checkedAt }),
+    });
+    if (name) task.lastChecks = { [name]: checkedAt };
+    window.dispatchEvent(new CustomEvent('shg:personal-task-state', { detail: { taskId: task.id, type: 'last-check', at: checkedAt } }));
+    return true;
+  }
+
+  async function recordTaskChatRead(task, readAt = new Date().toISOString()) {
+    if (!enabled() || !cache.ready || !task?._supabaseId || !session()?.user?.id) return false;
+    const name = profileName(session().user.id);
+    await request('/rest/v1/task_chat_reads?on_conflict=task_id,user_id', {
+      method: 'POST',
+      headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+      body: JSON.stringify({ task_id: task._supabaseId, user_id: session().user.id, read_at: readAt }),
+    });
+    if (name) task.chatReadBy = { [name]: readAt };
+    window.dispatchEvent(new CustomEvent('shg:personal-task-state', { detail: { taskId: task.id, type: 'chat-read', at: readAt } }));
+    return true;
+  }
+
+  function rollbackRejectedTasks(tasks, changed) {
+    let rolledBack = 0;
+    for (const task of changed || []) {
+      const index = tasks.indexOf(task);
+      const snapshot = task?._supabaseId ? cache.taskSnapshots.get(task._supabaseId) : null;
+      if (!snapshot) {
+        if (index >= 0) tasks.splice(index, 1);
+        rolledBack += 1;
+        continue;
+      }
+      const comments = task.comments || [];
+      for (const key of Object.keys(task)) delete task[key];
+      Object.assign(task, safeClone(snapshot), { comments });
+      rolledBack += 1;
+    }
+    if (!rolledBack) return;
+    writeTaskCache(tasks);
+    window.dispatchEvent(new CustomEvent('shg:remote-rollback', { detail: { count: rolledBack } }));
+    window.render?.();
   }
 
   async function syncTasks(tasks, activity = []) {
@@ -967,6 +1037,7 @@
     }
     cache.syncing = true;
     cache.queued = false;
+    let changed = [];
     try {
       const currentRemoteIds = new Set(tasks.map(task => task._supabaseId).filter(Boolean));
       for (const [id] of cache.tasks) {
@@ -976,6 +1047,7 @@
             headers: { Prefer: 'return=minimal' },
           });
           cache.tasks.delete(id);
+          cache.taskSnapshots.delete(id);
           cache.taskHashes.delete(id);
           cache.taskCreatedByIds.delete(id);
           cache.taskCreatorNames.delete(id);
@@ -983,7 +1055,7 @@
         }
       }
 
-      const changed = tasks.filter(task => (
+      changed = tasks.filter(task => (
         !task._supabaseId || cache.taskHashes.get(task._supabaseId) !== taskHash(task)
       ));
       for (const task of changed) await upsertTask(task);
@@ -1031,17 +1103,18 @@
       window.dispatchEvent(new CustomEvent('shg:remote-saved', { detail: { changed: changed.length } }));
     } catch (error) {
       console.error('SHG remote sync failed', error);
-      window.dispatchEvent(new CustomEvent('shg:remote-error', { detail: { message: error.message } }));
       // RLS/permission failures are permanent for the current request. Retrying
       // them every 30 seconds cannot succeed without a permission or data
       // change and only repeats the same warning to an idle user.
       if (error.code === '42501' || error.status === 401 || error.status === 403) {
+        rollbackRejectedTasks(tasks, changed);
         cache.queued = false;
         if (cache.retryTimer) clearTimeout(cache.retryTimer);
         cache.retryTimer = null;
         cache.retryDelay = 3000;
         return;
       }
+      window.dispatchEvent(new CustomEvent('shg:remote-error', { detail: { message: error.message } }));
       if (!cache.retryTimer) {
         const retryIn = cache.retryDelay;
         cache.retryDelay = Math.min(cache.retryDelay * 2, 30000);
@@ -1131,6 +1204,8 @@
   window.shgSaveUserSettings = saveUserSettings;
   window.shgIsTaskStarred = isTaskStarred;
   window.shgSetTaskStar = setTaskStar;
+  window.shgRecordTaskLastCheck = recordTaskLastCheck;
+  window.shgRecordTaskChatRead = recordTaskChatRead;
   window.addEventListener('shg:auth-session', () => startRealtimeComments());
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
